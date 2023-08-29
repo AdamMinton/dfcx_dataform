@@ -1,0 +1,8 @@
+{
+  "defaultSchema": "dfcx",
+  "assertionSchema": "dataform_assertions",
+  "warehouse": "bigquery",
+  "defaultDatabase": "aminton-sandbox-ps",
+  "defaultLocation": "US"
+}
+    

@@ -1,0 +1,52 @@
+config {
+  type: "incremental",
+  bigquery: {
+    partitionBy: "DATE(request_time)",
+    updatePartitionFilter:
+        "request_time >= timestamp_sub(current_timestamp(), interval 1 day)"
+  },
+  columns: {
+    response_id: "Unique ID of each response"
+  },
+  uniqueKey: ["response_id"],
+  description: "This is an example of a incremental MERGE only",
+}
+
+pre_operations {
+    
+    declare created_at_checkpoint default (
+    ${when(incremental(),
+    `select max(request_time) from ${self()}`,
+    `select timestamp("2000-01-01")`)}
+    );
+
+    CREATE TEMP FUNCTION agentResponse(responseMessages ARRAY<JSON>)
+    RETURNS STRING
+    LANGUAGE js
+    AS r"""
+    let agentResponse = "";
+    if (responseMessages && Array.isArray(responseMessages)) {
+        responseMessages.forEach(message => {
+        if (message.text && message.text.text) {
+            agentResponse += message.text.text.join(" ");
+        }
+        });
+    }
+    return agentResponse;
+    """;
+
+}
+
+
+SELECT  
+   dfcx.project_id
+  ,dfcx.agent_id
+  ,SPLIT(dfcx.conversation_name,'/')[SAFE_OFFSET(7)] as session_id
+  ,dfcx.turn_position as position
+  ,JSON_EXTRACT_SCALAR(dfcx.response,'$.responseId') as response_id
+  ,dfcx.request_time as request_time
+  ,JSON_EXTRACT_SCALAR(dfcx.request,'$.queryInput.text.text') as user_utterance
+  ,agentResponse(JSON_EXTRACT_ARRAY(dfcx.response,'$.queryResult.responseMessages')) as agent_response
+FROM `aminton-sandbox-ps.dfcx.dialogflow_bigquery_export_data` as dfcx
+WHERE TRUE
+    AND dfcx.request_time > created_at_checkpoint

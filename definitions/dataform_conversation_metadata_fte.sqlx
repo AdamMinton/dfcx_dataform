@@ -1,4 +1,5 @@
 config {
+  
   type: "incremental",
   bigquery: {
     partitionBy: "DATE(request_time)",
@@ -30,7 +31,7 @@ SELECT
   ,SPLIT(dfcx.conversation_name,'/')[SAFE_OFFSET(7)] as session_id
   ,dfcx.turn_position as position
   ,JSON_VALUE(dfcx.response,'$.responseId') as response_id
-  ,JSON_VALUE(dfcx.request,'$.queryInput.text.text') as user_utterance --missing dtmf digits
+  ,JSON_VALUE(dfcx.request,'$.queryInput.text.text') as user_utterance --missing dtmf digits enhancement
   ,CAST(null as string) as optional_dtmf_digits
   ,${ref('agentResponse')}(JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.responseMessages')) as agent_response
   ,CAST(null as string) as agent_partial_response
@@ -42,6 +43,11 @@ SELECT
   ,JSON_VALUE(dfcx.response,'$.queryResult.match.matchType') as match_type
   ,JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') as intent_confidence_score
   ,TO_JSON(COALESCE(JSON_QUERY(dfcx.response,'$.queryResult.parameters'),JSON_OBJECT())) as session_parameters
+  ,${ref('combineWebhookInfo')}(
+    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookDisplayNames')
+    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookStatuses')
+    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookPayloads')
+  ) as webhook
 FROM `aminton-sandbox-ps.dfcx.dialogflow_bigquery_export_data` as dfcx
 WHERE TRUE
     AND dfcx.request_time > request_time_checkpoint

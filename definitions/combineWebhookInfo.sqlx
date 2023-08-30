@@ -1,0 +1,32 @@
+config { 
+    type: "operations",
+    hasOutput: true
+}
+
+CREATE OR REPLACE FUNCTION ${self()} (webhookDisplayNames ARRAY<JSON>,webhookStatuses ARRAY<JSON>,webhookPayloads ARRAY<JSON>)
+RETURNS ARRAY<STRUCT<name STRING, status_code STRING, payload JSON>>
+LANGUAGE js
+AS r"""
+
+  const length = webhookDisplayNames.length;
+
+  if (
+    webhookStatuses.length !== length ||
+    webhookPayloads.length !== length
+  ) {
+    throw new Error('Input arrays must have the same length.');
+  }
+
+  const combinedArray = [];
+
+  for (let i = 0; i < length; i++) {
+    combinedArray.push({
+      name: webhookDisplayNames[i],
+      status_code: webhookStatuses[i].code,
+      payload: webhookPayloads[i]
+    });
+  }
+
+  return combinedArray;
+
+""";

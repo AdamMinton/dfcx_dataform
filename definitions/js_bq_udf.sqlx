@@ -2,7 +2,7 @@ config {
     type: "operations" 
 }
 
-CREATE FUNCTION dfcx.agentResponse(responseMessages ARRAY<JSON>)
+CREATE OR REPLACE FUNCTION dfcx.agentResponse(responseMessages ARRAY<JSON>)
 RETURNS STRING
 LANGUAGE js
 AS r"""

@@ -22,22 +22,6 @@ pre_operations {
 
 }
 
-CREATE TEMP FUNCTION agentResponse(responseMessages ARRAY<JSON>)
-RETURNS STRING
-LANGUAGE js
-AS r"""
-
-let agentResponse = "";
-if (responseMessages && Array.isArray(responseMessages)) {
-  responseMessages.forEach(message => {
-    if (message.text && message.text.text) {
-      agentResponse += message.text.text.join(" ");
-    }
-  });
-}
-return agentResponse;
-""";
-
 SELECT  
    dfcx.project_id
   ,dfcx.agent_id
@@ -46,7 +30,7 @@ SELECT
   ,JSON_EXTRACT_SCALAR(dfcx.response,'$.responseId') as response_id
   ,dfcx.request_time as request_time
   ,JSON_EXTRACT_SCALAR(dfcx.request,'$.queryInput.text.text') as user_utterance
-  -- ,agentResponse(JSON_EXTRACT_ARRAY(dfcx.response,'$.queryResult.responseMessages')) as agent_response
+  ,dfcx.agentResponse(JSON_EXTRACT_ARRAY(dfcx.response,'$.queryResult.responseMessages')) as agent_response
 FROM `aminton-sandbox-ps.dfcx.dialogflow_bigquery_export_data` as dfcx
 WHERE TRUE
     AND dfcx.request_time > request_time_checkpoint

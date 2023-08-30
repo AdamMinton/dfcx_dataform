@@ -36,7 +36,7 @@ SELECT
   ,CAST(null as string) as optional_dtmf_digits
   ,${ref('agentResponse')}(JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.responseMessages')) as agent_response
   ,CAST(null as string) as agent_partial_response
-  ,CAST(null as string) as source_flow
+  ,CAST(SPLIT(JSON_VALUE(dfcx.request,'$.queryParams.currentPage'),'/')[SAFE_OFFSET(7)] as string) as source_flow_id
   ,CAST(SPLIT(JSON_VALUE(dfcx.request,'$.queryParams.currentPage'),'/')[SAFE_OFFSET(9)] as string) as source_page
   ,JSON_VALUE(dfcx.response,'$.queryResult.currentFlow.displayName') as flow_name
   ,JSON_VALUE(dfcx.response,'$.queryResult.currentPage.displayName') as page_name
@@ -58,6 +58,7 @@ WHERE TRUE
 SELECT 
   * 
   ,LAG(page_name,1) OVER (PARTITION BY session_id ORDER BY request_time ASC) as lag_01_page_name
+  ,LAG(flow_name,1) OVER (PARTITION BY session_id ORDER BY request_time ASC) as lag_01_flow_name
 FROM data_extract
 )
 SELECT 
@@ -72,7 +73,7 @@ SELECT
   ,optional_dtmf_digits
   ,agent_response
   ,agent_partial_response
-  ,source_flow
+  ,IF(source_flow_id = '00000000-0000-0000-0000-000000000000','Default Start Flow',lag_01_flow_name) as source_flow
   ,COALESCE(source_page,lag_01_page_name) as source_page
   ,flow_name
   ,page_name

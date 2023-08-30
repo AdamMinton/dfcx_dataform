@@ -20,7 +20,21 @@ pre_operations {
     `select timestamp("2000-01-01")`)}
     );
 
-
+    CREATE TEMP FUNCTION agentResponse(responseMessages ARRAY<JSON>)
+    RETURNS STRING
+    LANGUAGE js
+    AS r"""
+    
+    let agentResponse = "";
+    if (responseMessages && Array.isArray(responseMessages)) {
+      responseMessages.forEach(message => {
+        if (message.text && message.text.text) {
+          agentResponse += message.text.text.join(" ");
+        }
+      });
+    }
+    return agentResponse;
+    """;
 
 }
 

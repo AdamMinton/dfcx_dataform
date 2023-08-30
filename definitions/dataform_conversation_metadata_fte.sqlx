@@ -44,9 +44,9 @@ SELECT
   ,JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') as intent_confidence_score
   ,TO_JSON(COALESCE(JSON_QUERY(dfcx.response,'$.queryResult.parameters'),JSON_OBJECT())) as session_parameters
   ,${ref('combineWebhookInfo')}(
-    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookDisplayNames')
-    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookStatuses')
-    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookPayloads')
+     COALESCE(JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookDisplayNames'),[])
+    ,COALESCE(JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookStatuses'),[])
+    ,COALESCE(JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookPayloads'),[])
   ) as webhook
 FROM `aminton-sandbox-ps.dfcx.dialogflow_bigquery_export_data` as dfcx
 WHERE TRUE

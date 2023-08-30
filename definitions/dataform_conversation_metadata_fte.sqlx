@@ -30,7 +30,7 @@ SELECT
   ,JSON_EXTRACT_SCALAR(dfcx.response,'$.responseId') as response_id
   ,dfcx.request_time as request_time
   ,JSON_EXTRACT_SCALAR(dfcx.request,'$.queryInput.text.text') as user_utterance
-  ,dfcx.agentResponse(JSON_EXTRACT_ARRAY(dfcx.response,'$.queryResult.responseMessages')) as agent_response
+  ,${ref('agentResponse')}(JSON_EXTRACT_ARRAY(dfcx.response,'$.queryResult.responseMessages')) as agent_response
 FROM `aminton-sandbox-ps.dfcx.dialogflow_bigquery_export_data` as dfcx
 WHERE TRUE
     AND dfcx.request_time > request_time_checkpoint

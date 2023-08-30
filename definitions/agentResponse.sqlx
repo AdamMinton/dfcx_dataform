@@ -1,8 +1,9 @@
 config { 
-    type: "operations" 
+    type: "operations",
+    hasOutput: true
 }
 
-CREATE OR REPLACE FUNCTION dfcx.agentResponse(responseMessages ARRAY<JSON>)
+CREATE OR REPLACE FUNCTION ${self()} (responseMessages ARRAY<JSON>)
 RETURNS STRING
 LANGUAGE js
 AS r"""

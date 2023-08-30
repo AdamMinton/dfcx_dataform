@@ -29,19 +29,19 @@ SELECT
   ,dfcx.agent_id as agent_id
   ,SPLIT(dfcx.conversation_name,'/')[SAFE_OFFSET(7)] as session_id
   ,dfcx.turn_position as position
-  ,JSON_EXTRACT_SCALAR(dfcx.response,'$.responseId') as response_id
-  ,JSON_EXTRACT_SCALAR(dfcx.request,'$.queryInput.text.text') as user_utterance --missing dtmf digits
+  ,JSON_VALUE(dfcx.response,'$.responseId') as response_id
+  ,JSON_VALUE(dfcx.request,'$.queryInput.text.text') as user_utterance --missing dtmf digits
   ,CAST(null as string) as optional_dtmf_digits
-  ,${ref('agentResponse')}(JSON_EXTRACT_ARRAY(dfcx.response,'$.queryResult.responseMessages')) as agent_response
+  ,${ref('agentResponse')}(JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.responseMessages')) as agent_response
   ,CAST(null as string) as agent_partial_response
   ,CAST(null as string) as source_flow
-  ,CAST(SPLIT(JSON_EXTRACT_SCALAR(dfcx.response,'$.queryParams.currentPage'),'/')[SAFE_OFFSET(9)] as string) as source_page
-  ,JSON_EXTRACT_SCALAR(dfcx.response,'$.queryResult.currentFlow.displayName') as flow_name
-  ,JSON_EXTRACT_SCALAR(dfcx.response,'$.queryResult.currentPage.displayName') as page_name
-  ,JSON_EXTRACT_SCALAR(dfcx.response,'$.queryResult.intent.displayName') as intent_display_name
-  ,JSON_EXTRACT_SCALAR(dfcx.response,'$.queryResult.match.matchType') as match_type
+  ,CAST(SPLIT(JSON_VALUE(dfcx.request,'$.queryParams.currentPage'),'/')[SAFE_OFFSET(9)] as string) as source_page
+  ,JSON_VALUE(dfcx.response,'$.queryResult.currentFlow.displayName') as flow_name
+  ,JSON_VALUE(dfcx.response,'$.queryResult.currentPage.displayName') as page_name
+  ,JSON_VALUE(dfcx.response,'$.queryResult.intent.displayName') as intent_display_name
+  ,JSON_VALUE(dfcx.response,'$.queryResult.match.matchType') as match_type
   ,JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') as intent_confidence_score
-  ,TO_JSON(JSON_EXTRACT_SCALAR(dfcx.response,'$.queryResult.parameters')) as session_parameters
+  ,TO_JSON(JSON_QUERY(dfcx.response,'$.queryResult.parameters')) as session_parameters
 FROM `aminton-sandbox-ps.dfcx.dialogflow_bigquery_export_data` as dfcx
 WHERE TRUE
     AND dfcx.request_time > request_time_checkpoint

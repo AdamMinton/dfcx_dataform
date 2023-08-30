@@ -41,7 +41,7 @@ SELECT
   ,JSON_VALUE(dfcx.response,'$.queryResult.intent.displayName') as intent_display_name
   ,JSON_VALUE(dfcx.response,'$.queryResult.match.matchType') as match_type
   ,JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') as intent_confidence_score
-  ,TO_JSON(JSON_QUERY(dfcx.response,'$.queryResult.parameters')) as session_parameters
+  ,TO_JSON(COALESCE(JSON_QUERY(dfcx.response,'$.queryResult.parameters'),JSON_OBJECT())) as session_parameters
 FROM `aminton-sandbox-ps.dfcx.dialogflow_bigquery_export_data` as dfcx
 WHERE TRUE
     AND dfcx.request_time > request_time_checkpoint

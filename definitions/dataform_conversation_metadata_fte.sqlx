@@ -14,7 +14,7 @@ config {
 
 pre_operations {
     
-    declare created_at_checkpoint default (
+    declare request_time_checkpoint default (
     ${when(incremental(),
     `select max(request_time) from ${self()}`,
     `select timestamp("2000-01-01")`)}
@@ -49,4 +49,4 @@ SELECT
   ,agentResponse(JSON_EXTRACT_ARRAY(dfcx.response,'$.queryResult.responseMessages')) as agent_response
 FROM `aminton-sandbox-ps.dfcx.dialogflow_bigquery_export_data` as dfcx
 WHERE TRUE
-    AND dfcx.request_time > created_at_checkpoint
+    AND dfcx.request_time > request_time_checkpoint

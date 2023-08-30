@@ -3,8 +3,8 @@ config {
     hasOutput: true
 }
 
-CREATE OR REPLACE FUNCTION ${self()} (webhookDisplayNames ARRAY<JSON>,webhookStatuses ARRAY<JSON>,webhookPayloads ARRAY<JSON>)
-RETURNS ARRAY<STRUCT<name STRING, status_code STRING, payload JSON>>
+CREATE OR REPLACE FUNCTION ${self()} (webhookDisplayNames ARRAY<JSON>,webhookStatuses ARRAY<JSON>,webhookPayloads ARRAY<JSON>,webhookLatencies ARRAY<JSON>)
+RETURNS ARRAY<STRUCT<name STRING, status_code STRING, payload JSON, latency_ms INT64>>
 LANGUAGE js
 AS r"""
 
@@ -12,7 +12,8 @@ AS r"""
 
   if (
     webhookStatuses.length !== length ||
-    webhookPayloads.length !== length
+    webhookPayloads.length !== length ||
+    webhookLatencies.length !== length
   ) {
     throw new Error('Input arrays must have the same length.');
   }
@@ -23,7 +24,8 @@ AS r"""
     combinedArray.push({
       name: webhookDisplayNames[i],
       status_code: webhookStatuses[i].code,
-      payload: webhookPayloads[i]
+      payload: webhookPayloads[i],
+      latency_ms: Number(webhookLatencies[i].nanos) / 1000000
     });
   }
 

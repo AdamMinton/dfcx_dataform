@@ -48,6 +48,7 @@ SELECT
      COALESCE(JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookDisplayNames'),[])
     ,COALESCE(JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookStatuses'),[])
     ,COALESCE(JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookPayloads'),[])
+    ,COALESCE(JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.webhookLatencies'),[])
   ) as webhooks
 FROM `aminton-sandbox-ps.dfcx.dialogflow_bigquery_export_data` as dfcx
 WHERE TRUE

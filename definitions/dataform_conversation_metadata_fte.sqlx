@@ -35,13 +35,13 @@ SELECT
   ,${ref('agentResponse')}(JSON_EXTRACT_ARRAY(dfcx.response,'$.queryResult.responseMessages')) as agent_response
   ,CAST(null as string) as agent_partial_response
   ,CAST(null as string) as source_flow
-  ,CAST(SPLIT(JSON_EXTRACT_SCALAR(dfcx.request,'$.queryParams.currentPage'),'/')[SAFE_OFFSET(9)] as string) as source_page
-  ,JSON_EXTRACT_SCALAR(dfcx.request,'$.queryResult.currentFlow.displayName') as flow_name
-  ,JSON_EXTRACT_SCALAR(dfcx.request,'$.queryResult.currentPage.displayName') as page_name
-  ,JSON_EXTRACT_SCALAR(dfcx.request,'$.queryResult.intent.displayName') as intent_display_name
-  ,JSON_EXTRACT_SCALAR(dfcx.request,'$.queryResult.match.matchType') as match_type
-  ,JSON_VALUE(dfcx.request,'$.queryResult.match.confidence') as intent_confidence_score
-  ,TO_JSON(JSON_EXTRACT_SCALAR(dfcx.request,'$.queryResult.parameters')) as session_parameters
+  ,CAST(SPLIT(JSON_EXTRACT_SCALAR(dfcx.response,'$.queryParams.currentPage'),'/')[SAFE_OFFSET(9)] as string) as source_page
+  ,JSON_EXTRACT_SCALAR(dfcx.response,'$.queryResult.currentFlow.displayName') as flow_name
+  ,JSON_EXTRACT_SCALAR(dfcx.response,'$.queryResult.currentPage.displayName') as page_name
+  ,JSON_EXTRACT_SCALAR(dfcx.response,'$.queryResult.intent.displayName') as intent_display_name
+  ,JSON_EXTRACT_SCALAR(dfcx.response,'$.queryResult.match.matchType') as match_type
+  ,JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') as intent_confidence_score
+  ,TO_JSON(JSON_EXTRACT_SCALAR(dfcx.response,'$.queryResult.parameters')) as session_parameters
 FROM `aminton-sandbox-ps.dfcx.dialogflow_bigquery_export_data` as dfcx
 WHERE TRUE
     AND dfcx.request_time > request_time_checkpoint

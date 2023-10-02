@@ -4,6 +4,10 @@ config {
   bigquery: {
     partitionBy: "DATE(request_time)"
   },
+  assertions: {
+    uniqueKey: ["session_id", "response_id"],
+    nonNull: ["session_id", "response_id"]
+  },
   description: "Main reporting table for DFCX conversations",
 }
 
@@ -40,7 +44,7 @@ base_data AS (
   FROM `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` as dfcx
   WHERE TRUE
     AND request_time > request_time_checkpoint
-    -- ${when(incremental(), `AND request_time > (SELECT MAX(request_time) FROM ${self()})`) }
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY request_time DESC) = 1
 )
 ,agent_response as (
   SELECT 
@@ -103,7 +107,7 @@ base_data AS (
   SELECT 
     session_id
     ,position
-    ,(SELECT MAX(IF(JSON_QUERY(response,'$.liveAgentHandoff') IS NOT NULL, TRUE, FALSE)) FROM UNNEST(responses) as response) as live_agent_escalation
+    ,MAX((SELECT MAX(IF(JSON_QUERY(response,'$.liveAgentHandoff') IS NOT NULL, TRUE, FALSE)) FROM UNNEST(responses) as response)) as live_agent_escalation
     ,COUNT(*) as execution_sequence_count
     ,ARRAY_AGG(STRUCT(
       step
@@ -123,7 +127,7 @@ base_data AS (
       ,target_page_id
     ) ORDER BY step ASC) as execution_sequence
   FROM execution_sequence_parse
-  GROUP BY 1,2,3
+  GROUP BY 1,2
 )
 ,webhook_agg AS (
   SELECT 

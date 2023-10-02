@@ -2,7 +2,10 @@
   "defaultSchema": "dfcx",
   "assertionSchema": "dataform_assertions",
   "warehouse": "bigquery",
-  "defaultDatabase": "aminton-sandbox-ps",
-  "defaultLocation": "US"
+  "defaultDatabase": "att-aam-external",
+  "defaultLocation": "US",
+  "vars": {
+    "dialogflowExport":"dialogflow_cx_exports.conversation_logs"
+  }
 }
     

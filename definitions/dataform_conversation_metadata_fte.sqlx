@@ -199,6 +199,7 @@ SELECT
   ,execution_sequence_agg.live_agent_escalation
   ,execution_sequence_agg.execution_sequence_count
   ,base_data.language_code
+  ,base_data.session_parameters
   ,execution_sequence_agg.execution_sequence
   ,webhook_agg.webhooks
 FROM base_data

@@ -40,7 +40,7 @@ base_data AS (
     ,dfcx.language_code
     ,JSON_VALUE(dfcx.request,'$.queryInput.event.event') as event
     ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.responseMessages') as response_messages
-    ,conversation_signals.agentEscalated as live_agent_handoff
+    ,IF(JSON_VALUE(conversation_signals,'$.turnSignals.agentEscalated')='true',TRUE,FALSE) as live_agent_handoff
   FROM `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` as dfcx
   WHERE TRUE
     AND request_time > request_time_checkpoint

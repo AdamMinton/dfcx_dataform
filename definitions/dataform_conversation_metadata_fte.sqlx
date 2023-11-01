@@ -46,19 +46,6 @@ base_data AS (
     AND request_time > request_time_checkpoint
   QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY request_time DESC) = 1
 )
-,agent_response as (
-  SELECT 
-    session_id
-    ,position
-    ,STRING_AGG(response_message_text,' ') as agent_response
-  FROM 
-    base_data
-      LEFT JOIN UNNEST(response_messages) AS response_message
-      LEFT JOIN UNNEST(JSON_VALUE_ARRAY(response_message,'$.text.text')) as response_message_text
-  WHERE TRUE
-    AND response_message_text is not null
-  GROUP BY 1,2
-)
 ,execution_sequence as (
   SELECT 
     step + 1 as step
@@ -169,6 +156,22 @@ base_data AS (
     ,MIN(request_time) as session_request_time_start
   FROM base_data
   GROUP BY 1
+)
+,agent_response AS (
+  SELECT 
+    session_id
+    ,position
+    ,STRING_AGG(JSON_VALUE(response_text,'$'),' ' ORDER BY session_id, position, response_offset,response_text_offset) as agent_response
+  FROM 
+  (
+    SELECT *
+    FROM execution_sequence_parse
+    WHERE ARRAY_LENGTH(responses) > 0
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, position ORDER BY step DESC) = 1
+  ) as a
+  INNER JOIN UNNEST(a.responses) as response with offset as response_offset
+  INNER JOIN UNNEST(JSON_QUERY_ARRAY(response,'$.text.text')) as response_text with offset as response_text_offset
+  GROUP BY 1,2
 )
 SELECT 
   base_data.project_id

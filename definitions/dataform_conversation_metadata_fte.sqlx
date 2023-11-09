@@ -28,7 +28,7 @@ base_data AS (
     ,ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] as session_id
     ,JSON_VALUE(dfcx.response,'$.responseId') as response_id
     ,dfcx.request_time as request_time
-    ,dfcx.turn_position as position
+    ,ROW_NUMBER() OVER (PARTITION BY ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] ORDER BY request_time ASC) as position
     ,JSON_VALUE(dfcx.request,'$.queryInput.text.text') as user_utterance
     ,JSON_VALUE(dfcx.request,'$.queryInput.dtmf.digits') as optional_dtmf_digits
     ,ARRAY_REVERSE(SPLIT(JSON_VALUE(dfcx.response,'$.queryResult.intent.name'),'/'))[SAFE_OFFSET(0)] as intent_display_id

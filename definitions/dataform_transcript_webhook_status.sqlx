@@ -1,0 +1,116 @@
+config {
+
+  type: "incremental",
+  bigquery: {
+    partitionBy: "DATE(request_time)"
+  },
+  assertions: {
+    uniqueKey: ["session_id", "position", "step"],
+    nonNull: ["session_id", "position", "step"]
+  },
+  description: "Contains the status of the webhook if it soft failed",
+}
+
+pre_operations {
+  declare request_time_checkpoint default (
+    ${when(incremental(),
+    `select max(request_time) from ${self()}`,
+    `select timestamp("2000-01-01")`)}
+  );
+}
+
+WITH extract_status_values as (
+  SELECT 
+  session_id
+  ,position
+  ,step
+  ,request_time
+  ,JSON_VALUE(session_parameters_updated,'$.BillDisputeTypeStatus') as BillDisputeTypeStatus
+  ,JSON_VALUE(session_parameters_updated,'$.StorePaymentProfileStatus') as StorePaymentProfileStatus
+  ,JSON_VALUE(session_parameters_updated,'$.CdeDecisionStatus') as CdeDecisionStatus
+  ,JSON_VALUE(session_parameters_updated,'$.uploadStatus') as uploadStatus
+  ,JSON_VALUE(session_parameters_updated,'$.DisputeChargeStatusCode') as DisputeChargeStatusCode
+  ,JSON_VALUE(session_parameters_updated,'$.PaymentPlanAutopayStatus') as PaymentPlanAutopayStatus
+  ,JSON_VALUE(session_parameters_updated,'$.BillConfusionBillDisplayStatus') as BillConfusionBillDisplayStatus
+  ,JSON_VALUE(session_parameters_updated,'$.BillPaymentStatus') as BillPaymentStatus
+  ,JSON_VALUE(session_parameters_updated,'$.AutopayStatus') as AutopayStatus
+  ,JSON_VALUE(session_parameters_updated,'$.BillConfusionTier2Status') as BillConfusionTier2Status
+  ,JSON_VALUE(session_parameters_updated,'$.BillDisputeSubmitChargeStatus') as BillDisputeSubmitChargeStatus
+  ,JSON_VALUE(session_parameters_updated,'$.APIStatus') as APIStatus
+  ,JSON_VALUE(session_parameters_updated,'$.TradeInStatusList') as TradeInStatusList
+  ,JSON_VALUE(session_parameters_updated,'$.BillConfusionDisplayStatus') as BillConfusionDisplayStatus
+  ,JSON_VALUE(session_parameters_updated,'$.BillConfusionStatus') as BillConfusionStatus
+  ,JSON_VALUE(session_parameters_updated,'$.MobilityTCContractStatus') as MobilityTCContractStatus
+  ,JSON_VALUE(session_parameters_updated,'$.SubmissionStatus') as SubmissionStatus
+  ,JSON_VALUE(session_parameters_updated,'$.downloadStatus') as downloadStatus
+  ,JSON_VALUE(session_parameters_updated,'$.SchedulePaymentStatus') as SchedulePaymentStatus
+  ,JSON_VALUE(session_parameters_updated,'$.BillPendingCreditStatus') as BillPendingCreditStatus
+  ,JSON_VALUE(session_parameters_updated,'$.BillConfusionFeesStatus') as BillConfusionFeesStatus
+  ,JSON_VALUE(session_parameters_updated,'$.BillActiveCreditAndPromotionStatus') as BillActiveCreditAndPromotionStatus
+  ,JSON_VALUE(session_parameters_updated,'$.SmsStatusMsg') as SmsStatusMsg
+  ,JSON_VALUE(session_parameters_updated,'$.ProcessPaymentStatus') as ProcessPaymentStatus
+  ,JSON_VALUE(session_parameters_updated,'$.ValidateCCStatus') as ValidateCCStatus
+  ,JSON_VALUE(session_parameters_updated,'$.SmsStatusCode') as SmsStatusCode
+  ,JSON_VALUE(session_parameters_updated,'$.daasStatusCode') as daasStatusCode
+  ,JSON_VALUE(session_parameters_updated,'$.UpdateContactInfoStatus') as UpdateContactInfoStatus
+  ,JSON_VALUE(session_parameters_updated,'$.daasStatus') as daasStatus
+  ,JSON_VALUE(session_parameters_updated,'$.result') as result
+  FROM ${ref("dataform_conversation_metadata_fte")} as a
+    ,UNNEST(a.webhooks) as webhook
+  WHERE TRUE
+    AND request_time > request_time_checkpoint 
+)
+,determine_success as (
+    SELECT *
+    ,CASE WHEN REGEXP_CONTAINS(lower(BillDisputeTypeStatus),r'failure|false') THEN FALSE WHEN BillDisputeTypeStatus is not null THEN TRUE ELSE NULL END as BillDisputeTypeStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(StorePaymentProfileStatus),r'failure|false') THEN FALSE WHEN StorePaymentProfileStatus is not null THEN TRUE ELSE NULL END as StorePaymentProfileStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(CdeDecisionStatus),r'failure|false') THEN FALSE WHEN CdeDecisionStatus is not null THEN TRUE ELSE NULL END as CdeDecisionStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(uploadStatus),r'failure|false') THEN FALSE WHEN uploadStatus is not null THEN TRUE ELSE NULL END as uploadStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(DisputeChargeStatusCode),r'failure|false') THEN FALSE WHEN DisputeChargeStatusCode is not null THEN TRUE ELSE NULL END as DisputeChargeStatusCode_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(PaymentPlanAutopayStatus),r'failure|false') THEN FALSE WHEN PaymentPlanAutopayStatus is not null THEN TRUE ELSE NULL END as PaymentPlanAutopayStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(BillConfusionBillDisplayStatus),r'failure|false') THEN FALSE WHEN BillConfusionBillDisplayStatus is not null THEN TRUE ELSE NULL END as BillConfusionBillDisplayStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(BillPaymentStatus),r'failure|false') THEN FALSE WHEN BillPaymentStatus is not null THEN TRUE ELSE NULL END as BillPaymentStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(AutopayStatus),r'failure|false') THEN FALSE WHEN AutopayStatus is not null THEN TRUE ELSE NULL END as AutopayStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(BillConfusionTier2Status),r'failure|false') THEN FALSE WHEN BillConfusionTier2Status is not null THEN TRUE ELSE NULL END as BillConfusionTier2Status_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(BillDisputeSubmitChargeStatus),r'failure|false') THEN FALSE WHEN BillDisputeSubmitChargeStatus is not null THEN TRUE ELSE NULL END as BillDisputeSubmitChargeStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(APIStatus),r'failure|false') THEN FALSE WHEN APIStatus is not null THEN TRUE ELSE NULL END as APIStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(TradeInStatusList),r'failure|false') THEN FALSE WHEN TradeInStatusList is not null THEN TRUE ELSE NULL END as TradeInStatusList_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(BillConfusionDisplayStatus),r'failure|false') THEN FALSE WHEN BillConfusionDisplayStatus is not null THEN TRUE ELSE NULL END as BillConfusionDisplayStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(BillConfusionStatus),r'failure|false') THEN FALSE WHEN BillConfusionStatus is not null THEN TRUE ELSE NULL END as BillConfusionStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(MobilityTCContractStatus),r'failure|false') THEN FALSE WHEN MobilityTCContractStatus is not null THEN TRUE ELSE NULL END as MobilityTCContractStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(SubmissionStatus),r'failure|false') THEN FALSE WHEN SubmissionStatus is not null THEN TRUE ELSE NULL END as SubmissionStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(downloadStatus),r'failure|false') THEN FALSE WHEN downloadStatus is not null THEN TRUE ELSE NULL END as downloadStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(SchedulePaymentStatus),r'failure|false') THEN FALSE WHEN SchedulePaymentStatus is not null THEN TRUE ELSE NULL END as SchedulePaymentStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(BillPendingCreditStatus),r'failure|false') THEN FALSE WHEN BillPendingCreditStatus is not null THEN TRUE ELSE NULL END as BillPendingCreditStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(BillConfusionFeesStatus),r'failure|false') THEN FALSE WHEN BillConfusionFeesStatus is not null THEN TRUE ELSE NULL END as BillConfusionFeesStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(BillActiveCreditAndPromotionStatus),r'failure|false') THEN FALSE WHEN BillActiveCreditAndPromotionStatus is not null THEN TRUE ELSE NULL END as BillActiveCreditAndPromotionStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(SmsStatusMsg),r'failure|false') THEN FALSE WHEN SmsStatusMsg is not null THEN TRUE ELSE NULL END as SmsStatusMsg_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(ProcessPaymentStatus),r'failure|false') THEN FALSE WHEN ProcessPaymentStatus is not null THEN TRUE ELSE NULL END as ProcessPaymentStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(ValidateCCStatus),r'failure|false') THEN FALSE WHEN ValidateCCStatus is not null THEN TRUE ELSE NULL END as ValidateCCStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(SmsStatusCode),r'failure|false') THEN FALSE WHEN SmsStatusCode is not null THEN TRUE ELSE NULL END as SmsStatusCode_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(daasStatusCode),r'failure|false') THEN FALSE WHEN daasStatusCode is not null THEN TRUE ELSE NULL END as daasStatusCode_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(UpdateContactInfoStatus),r'failure|false') THEN FALSE WHEN UpdateContactInfoStatus is not null THEN TRUE ELSE NULL END as UpdateContactInfoStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(daasStatus),r'failure|false') THEN FALSE WHEN daasStatus is not null THEN TRUE ELSE NULL END as daasStatus_did_pass
+    ,CASE WHEN REGEXP_CONTAINS(lower(result),r'failure|false|error') THEN FALSE WHEN daasStatus is not null THEN TRUE ELSE NULL END as result_did_pass
+    FROM extract_status_values
+)
+,final_flag as (
+  SELECT *
+  ,CASE 
+    --if entire row of statuses is null
+    WHEN BillDisputeTypeStatus_did_pass IS NULL AND StorePaymentProfileStatus_did_pass IS NULL AND CdeDecisionStatus_did_pass IS NULL AND uploadStatus_did_pass IS NULL AND DisputeChargeStatusCode_did_pass IS NULL AND PaymentPlanAutopayStatus_did_pass IS NULL AND BillConfusionBillDisplayStatus_did_pass IS NULL AND BillPaymentStatus_did_pass IS NULL AND AutopayStatus_did_pass IS NULL 
+      --AND BillConfusionTier2Status_did_pass IS NULL 
+      AND BillDisputeSubmitChargeStatus_did_pass IS NULL AND APIStatus_did_pass IS NULL AND TradeInStatusList_did_pass IS NULL AND BillConfusionDisplayStatus_did_pass IS NULL AND BillConfusionStatus_did_pass IS NULL AND MobilityTCContractStatus_did_pass IS NULL AND SubmissionStatus_did_pass IS NULL AND downloadStatus_did_pass IS NULL AND SchedulePaymentStatus_did_pass IS NULL AND BillPendingCreditStatus_did_pass IS NULL AND BillConfusionFeesStatus_did_pass IS NULL AND BillActiveCreditAndPromotionStatus_did_pass IS NULL AND SmsStatusMsg_did_pass IS NULL AND ProcessPaymentStatus_did_pass IS NULL AND ValidateCCStatus_did_pass IS NULL AND SmsStatusCode_did_pass IS NULL AND daasStatusCode_did_pass IS NULL AND UpdateContactInfoStatus_did_pass IS NULL AND daasStatus_did_pass IS NULL AND result_did_pass IS NULL
+    THEN NULL
+    --if any failed then failed
+    WHEN BillDisputeTypeStatus_did_pass = FALSE OR StorePaymentProfileStatus_did_pass = FALSE OR CdeDecisionStatus_did_pass = FALSE OR uploadStatus_did_pass = FALSE OR DisputeChargeStatusCode_did_pass = FALSE OR PaymentPlanAutopayStatus_did_pass = FALSE OR BillConfusionBillDisplayStatus_did_pass = FALSE OR BillPaymentStatus_did_pass = FALSE OR AutopayStatus_did_pass = FALSE 
+      --OR BillConfusionTier2Status_did_pass = FALSE 
+      OR BillDisputeSubmitChargeStatus_did_pass = FALSE OR APIStatus_did_pass = FALSE OR TradeInStatusList_did_pass = FALSE OR BillConfusionDisplayStatus_did_pass = FALSE OR BillConfusionStatus_did_pass = FALSE OR MobilityTCContractStatus_did_pass = FALSE OR SubmissionStatus_did_pass = FALSE OR downloadStatus_did_pass = FALSE OR SchedulePaymentStatus_did_pass = FALSE OR BillPendingCreditStatus_did_pass = FALSE OR BillConfusionFeesStatus_did_pass = FALSE OR BillActiveCreditAndPromotionStatus_did_pass = FALSE OR SmsStatusMsg_did_pass = FALSE OR ProcessPaymentStatus_did_pass = FALSE OR ValidateCCStatus_did_pass = FALSE OR SmsStatusCode_did_pass = FALSE OR daasStatusCode_did_pass = FALSE OR UpdateContactInfoStatus_did_pass = FALSE OR daasStatus_did_pass = FALSE OR result_did_pass = FALSE
+    THEN FALSE
+    --then passed
+    ELSE TRUE
+   END as did_row_pass
+  FROM determine_success
+)
+SELECT *
+FROM final_flag

@@ -131,6 +131,7 @@ base_data AS (
       ,webhook_latency_ms
       ,webhook_status
       ,webhook_url
+      ,session_parameters_updated
     ) ORDER BY step ASC) as webhooks
   FROM execution_sequence_parse
   WHERE webhook_id is not null

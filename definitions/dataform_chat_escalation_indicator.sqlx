@@ -1,0 +1,48 @@
+config {
+  type: "incremental",
+  bigquery: {
+    partitionBy: "DATE(request_time)"
+  },
+  assertions: {
+    uniqueKey: ["session_id", "position"],
+    nonNull: ["session_id", "position"]
+  },
+  description: "Chat Specific Live Agent Escalation Indicator",
+}
+
+pre_operations {
+  declare request_time_checkpoint default (
+    ${when(incremental(),
+    `select max(request_time) from ${self()}`,
+    `select timestamp("2000-01-01")`)}
+  );
+}
+
+WITH 
+stg_escalation_ind as (
+    SELECT 
+    session_id
+    ,position
+    ,step
+    ,response_offset
+    ,response
+    ,IF(lower(JSON_QUERY(response,'$.liveAgentHandoff')) = 'true',TRUE,FALSE) as escalation_indicator
+    FROM `att-aam-external.dfcx.dataform_conversation_metadata_fte` 
+    LEFT JOIN UNNEST(execution_sequence) as execution_step
+    LEFT JOIN UNNEST(responses) as response with OFFSET as response_offset
+    WHERE response_offset = 0
+        AND JSON_QUERY(response,'$.liveAgentHandoff') like '%liveAgentHandoff%'
+        AND request_time > request_time_checkpoint
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, position ORDER BY step DESC) = 1
+)
+SELECT
+    request_time
+    ,conversation.session_id
+    ,conversation.position
+    ,ifnull(escalation_1.escalation_indicator, False) as escalation_indicator
+FROM `att-aam-external.dfcx.dataform_conversation_metadata_fte` as conversation
+    LEFT JOIN stg_escalation_ind as escalation_1 
+        ON conversation.session_id = escalation_1.session_id
+        AND conversation.position = escalation_1.position
+WHERE TRUE
+    AND conversation.project_id like '%chat%'

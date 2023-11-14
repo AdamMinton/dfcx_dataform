@@ -5,8 +5,8 @@ config {
     partitionBy: "DATE(request_time)"
   },
   assertions: {
-    uniqueKey: ["session_id", "response_id"],
-    nonNull: ["session_id", "response_id"]
+    uniqueKey: ["session_id", "position"],
+    nonNull: ["session_id", "position"]
   },
   description: "Main reporting table for DFCX conversations",
 }

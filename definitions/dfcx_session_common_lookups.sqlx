@@ -34,7 +34,7 @@ SELECT
       conversation.location,
       '%2Fagents%2F',
       conversation.agent_id
-    ) AS conversation_url
+    ) AS cobweb_url
   ,CONCAT(
     'https://pantheon.corp.google.com/logs/query;',
     'query=resource.type%3D%22global%22%0Aresource.labels.project_id%3D%22',
@@ -53,13 +53,13 @@ SELECT
     '--PT15M;',
     '?',
     'project=',
-    conversation.project_id) as logs_explorer_link
+    conversation.project_id) as logs_explorer_url
   ,CONCAT(
     'https://data.corp.google.com/sites/epgvfa2lqeur/att_transcript_explorer/?',
     'f=conversation_create_date:eq:',
     CAST(UNIX_MILLIS(TIMESTAMP(DATE(conversation_info.session_start_time))) AS STRING),
     '&f=conversation_id:eq:',
-    conversation.session_id) as transcript_explorer_link
+    conversation.session_id) as transcript_explorer_url
 FROM conversation
   LEFT JOIN ${ref("dfcx_session_metadata")} as conversation_info 
     ON  conversation.session_id = conversation_info.session_id
@@ -68,7 +68,8 @@ GROUP BY 1,2,3,4,5,6,7,8,9,10,11
 )
 SELECT
 * 
-,CONCAT('[COBWEB](',conversation_url,'&authuser={{AUTH_USER}})') as cobweb_link_reporting
-,CONCAT('[LOGS](',logs_explorer_link,'&authuser={{AUTH_USER}})') as logs_explorer_link_reporting
-,CONCAT('[TE](',transcript_explorer_link,')') as transcript_explorer_link_reporting
+,CONCAT('[COBWEB](',cobweb_url,'&authuser={{AUTH_USER}})') as cobweb_url_reporting
+,CONCAT('[LOGS](',logs_explorer_url,'&authuser={{AUTH_USER}})') as logs_explorer_url_reporting
+,CONCAT('[TE](',transcript_explorer_url,')') as transcript_explorer_url_reporting
+
 FROM prep

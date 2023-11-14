@@ -4,7 +4,7 @@ config {
     uniqueKey: ["session_id"],
     nonNull: ["session_id"]
   },
-  description: "DFCX session summary information",
+  description: "DFCX session heuristic outcome",
 }
 
 

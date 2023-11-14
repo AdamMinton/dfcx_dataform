@@ -27,7 +27,7 @@ SELECT
 FROM 
 (
   SELECT *
-  FROM ${ref("dataform_transcript")}
+  FROM ${ref("dfcx_transcript")}
     ,UNNEST(execution_sequence) as execution_step
   WHERE TRUE
     AND ARRAY_LENGTH(responses) > 0

@@ -9,7 +9,7 @@ config {
 
 WITH conversation as (
   SELECT project_id, location, agent_id, session_id, MIN(session_request_time_start) as conversation_create_date
-  FROM ${ref("dataform_transcript")}
+  FROM ${ref("dfcx_transcript")}
   GROUP BY 1,2,3,4
 )
 ,prep as (
@@ -58,7 +58,7 @@ SELECT
     '&f=conversation_id:eq:',
     conversation.session_id) as transcript_explorer_link
 FROM conversation
-  LEFT JOIN ${ref("dataform_session_metadata")} as conversation_info 
+  LEFT JOIN ${ref("dfcx_session_metadata")} as conversation_info 
     ON  conversation.session_id = conversation_info.session_id
 WHERE 1=1
 GROUP BY 1,2,3,4,5,6,7,8,9,10,11

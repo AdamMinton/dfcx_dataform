@@ -53,8 +53,8 @@ transcript_raw AS (
       ,NULLIF(TRIM(JSON_VALUE(session_parameters,'$.isAuthenticated')),'') as isAuthenticated
       ,NULLIF(TRIM(JSON_VALUE(session_parameters,'$.producttype')),'') as producttype
       ,NULLIF(TRIM(JSON_VALUE(session_parameters,'$.prev_intent')),'') as prev_intent
-  FROM ${ref("dataform_transcript")} as conv
-    LEFT JOIN ${ref("dataform_transcript_parameters")} as parameters USING (request_time,session_id,position)
+  FROM ${ref("dfcx_transcript")} as conv
+    LEFT JOIN ${ref("dfcx_transcript_parameters")} as parameters USING (request_time,session_id,position)
   WHERE TRUE
     AND request_time > request_time_checkpoint
 )
@@ -112,7 +112,7 @@ transcript_raw AS (
     ,NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.SMSType')),'') as sms_type
     ,NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.smsNeedsResponse')),'') as sms_needs_response
     ,NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.VoiceFaqId')),'') as voice_faq_id
-  FROM ${ref("dataform_transcript")}
+  FROM ${ref("dfcx_transcript")}
     ,UNNEST(execution_sequence) as es 
   WHERE 1=1
     AND request_time > request_time_checkpoint

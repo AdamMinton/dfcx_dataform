@@ -35,7 +35,7 @@ WITH
     conversation.session_parameters,
     conversation.execution_sequence
   FROM
-    ${ref("dataform_transcript")} AS conversation
+    ${ref("dfcx_transcript")} AS conversation
     -- LEFT JOIN ais_ccai_eng.att_chat_message_buttons AS buttons
     --   ON
     --     conversation.session_id = buttons.session_id

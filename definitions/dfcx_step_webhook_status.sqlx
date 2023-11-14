@@ -55,7 +55,7 @@ WITH extract_status_values as (
   ,JSON_VALUE(session_parameters_updated,'$.UpdateContactInfoStatus') as UpdateContactInfoStatus
   ,JSON_VALUE(session_parameters_updated,'$.daasStatus') as daasStatus
   ,JSON_VALUE(session_parameters_updated,'$.result') as result
-  FROM ${ref("dataform_transcript")} as a
+  FROM ${ref("dfcx_transcript")} as a
     ,UNNEST(a.webhooks) as webhook
   WHERE TRUE
     AND request_time > request_time_checkpoint 

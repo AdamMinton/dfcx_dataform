@@ -1,0 +1,168 @@
+config {
+  type: "table",
+  description: "Payment - PAY_BILL Disposition",
+}
+
+pre_operations {
+
+-- Functions --
+----------------
+-- BreakDown 1 --
+CREATE TEMP  FUNCTION GetBreakDown_L1(status STRING, last_event STRING, last_goal STRING, flow_name STRING, last_page STRING, determine_next_route_flag BOOL, credit_zero_balance_flag BOOL)
+RETURNS STRING
+AS ( 
+    case  when status = 'SUCCEEDED' and last_event = 'Success' then 'Successfully Finishing Self-Service' 
+          when status = 'SUCCEEDED' and (lower(last_event) = 'hangup' or lower(last_event) like '%agent%') then 'Successfully Finishing SS HangUp/Agent'       
+          when status = 'NO ATTEMPT' and (determine_next_route_flag is true or last_goal = 'DetermineNextRoute' or last_event = 'DetermineNextRoute') 
+                and flow_name = 'Make Payment' then 'Not Starting Self-Service'           
+          when status = 'NO ATTEMPT' and (determine_next_route_flag is true or last_goal = 'DetermineNextRoute' or last_event = 'DetermineNextRoute') 
+                and flow_name != 'Make Payment' then 'Not Starting Flow' 
+          when status = 'NO ATTEMPT' and ifnull(last_goal, 'null') = 'null' and (ifnull(last_event, 'null') = 'null' or last_event = 'HangUp')
+                and flow_name = 'Steering' and last_page = 'POC: NextIntent' then 'Not Starting Flow'
+          when status = 'FAILED' and (lower(last_event) = 'hangup' or lower(last_event) like '%agent%') then 'Not Finishing Self-Service (HangUp/Agent)' 
+     else concat(initcap(status), ' (Others)') end
+);
+
+-- BreakDown 2 --
+CREATE TEMP FUNCTION GetBreakDown_L2(status STRING, last_event STRING, last_goal STRING, flow_name STRING, last_page STRING, determine_next_route_flag BOOL, credit_zero_balance_flag BOOL)
+RETURNS STRING
+AS (
+    case  when status = 'SUCCEEDED' and last_event = 'Success' then 'Successfully Finishing Self-Service' 
+          when status = 'SUCCEEDED' and lower(last_event) = 'hangup' then 'HangUp' 
+          when status = 'SUCCEEDED' and lower(last_event) like '%agent%' then 'Agent'          
+        
+          when status = 'NO ATTEMPT' and (determine_next_route_flag is true or last_goal = 'DetermineNextRoute' or last_event = 'DetermineNextRoute') then 'Screening Out' 
+          when status = 'NO ATTEMPT' and  credit_zero_balance_flag then 'Credit or Zero Balance' 
+          when status = 'NO ATTEMPT' and ifnull(last_goal, 'null') = 'null' and (ifnull(last_event, 'null') = 'null' or last_event = 'HangUp') 
+                and flow_name = 'Steering' and last_page = 'POC: NextIntent' then 'Screening Out'
+          when status = 'FAILED' and lower(last_event) = 'hangup'  then 'HangUp'
+          when status = 'FAILED' and lower(last_event) like '%agent%' then 'Agent'
+    else concat(initcap(status), ' (Others)') end
+          
+);
+
+}
+
+
+######################################################
+
+with base_interactions as
+(
+SELECT  
+        interactions.session_id,
+        session_request_time_start, 
+        interactions.interaction_position,
+        interactions.start_interaction_position,
+        interactions.end_interaction_position,
+        IF(actions.action_ended,"SUCCEEDED",IF(actions.action_started,"FAILED","NO ATTEMPT")) as Status,
+        final_message.*,
+        actions.action, actions.action_started_position, actions.action_ended_position,
+        actions.action_started, actions.action_ended, actions.action_type,
+        to_json_string(execution_steps) as str_execution_steps
+FROM ${ref("dataform_conversation_interaction")} as interactions
+  left join unnest(actions) as actions
+WHERE 1=1
+and interaction_head_intent = 'pmt_make_payment'
+and  actions.action = 'PAY_BILL'
+),
+-----------------------------------------------
+-- Get some params from metadata_fte table --
+conv_sub_info as
+ (
+  SELECT  base_interactions.* except (str_execution_steps),
+          (case when str_execution_steps like '%DetermineNextRoute%' then true else false end) as determine_next_route_flag,
+          (case when (str_execution_steps like  '%page_display_name%"Credit Balance"%'   -- '%Zero Balance%'
+                  or str_execution_steps like '%page_display_name%"Zero Balance"%') then true else false end) as credit_zero_balance_flag,
+          JSON_VALUE(session_parameters,'$.Event') AS last_event
+          ,JSON_VALUE(session_parameters,'$.goal') AS last_goal
+          ,JSON_VALUE(session_parameters,'$.BillingSource') as billing_source
+from base_interactions as base_interactions
+inner JOIN ${ref("dataform_conversation_metadata_fte")} as conversation
+      ON base_interactions.session_id = conversation.session_id  and base_interactions.end_interaction_position = conversation.position
+where 1=1
+),
+-- count all turns in make payment flow --
+conversation_turns as (
+SELECT distinct 
+conversation.session_id
+,count(conversation.position) as turn_count
+FROM ${ref("dataform_conversation_metadata_fte")} as conversation
+WHERE TRUE
+AND flow_display_name IN ('Make Payment','Card Expiration Date')
+-- and flow_id in ('42e6f7a7-e2f1-44ed-8fb5-832c8c749d28', 'df0626a8-2880-4996-ade4-28ac51750ac2') --Make Payment and Card Expiration Date
+group by 1
+),
+
+------------------
+-- New Easy Pay-- 
+sub_easy_pay as (
+SELECT  distinct base_interactions.session_id,
+        conversation.intent_display_name,
+        conversation.page_display_name,
+        if(conversation.intent_display_name in ('confirmation.yes', 'sup_pay_different_amount', 'sup_pay_with_different_method', 'sup_pay_total_amount', 
+            'sup_pay_specified_amount', 'confirmation.yes_but_change_pmt_method', 'acct_ci_different_account'), 1, 0) as easy_pay_accepted_count
+from base_interactions as base_interactions
+LEFT JOIN ${ref("dataform_conversation_metadata_fte")} as conversation
+      ON base_interactions.session_id = conversation.session_id  
+where 1=1
+--AND DATE(conversation._PARTITION_DATE) BETWEEN PARSE_DATE('%F', $start_date) AND PARSE_DATE('%F', $end_date)  -- For Full Load
+--AND base_interactions.conversation_date BETWEEN PARSE_DATE('%F', $start_date) AND PARSE_DATE('%F', $end_date) -- For Full Load  
+AND conversation.source_page_display_name = 'Easy Pay Offer'
+),
+
+easy_pay as (
+select session_id,
+      'Yes' as easy_pay_offered_flag,
+      case when sum(easy_pay_accepted_count) > 0 then 'Yes' else 'No' end as easy_pay_accepted_flag
+from sub_easy_pay
+group by 1,2
+)
+
+
+-----------------------------------------------
+-- Final Query --
+select 
+        base_interactions.session_request_time_start, 
+        base_interactions.session_id,
+        base_interactions.status,
+        base_interactions.match_type,
+        base_interactions.source_page_display_name,
+        base_interactions.source_flow_display_name,
+        base_interactions.flow_display_name,
+        base_interactions.page_display_name,
+        base_interactions.intent_display_name,
+        GetBreakDown_L1(base_interactions.Status, last_event, last_goal, base_interactions.flow_display_name, base_interactions.page_display_name,
+                base_interactions.determine_next_route_flag, base_interactions.credit_zero_balance_flag) as status_breakdown_1,
+        GetBreakDown_L2(base_interactions.Status, last_event, last_goal, base_interactions.flow_display_name, base_interactions.page_display_name,
+                base_interactions.determine_next_route_flag, base_interactions.credit_zero_balance_flag) as status_breakdown_2,
+        last_event,
+        last_goal,
+        billing_source,
+        final_language_code,
+        heuristic_outcome.heuristic_outcome as improved_nsm_heuristic_outcome,
+        att_conversation.att_call_id,
+        att_conversation.is_call_recorded,
+        '[' || base_interactions.session_id || '](' || links.conversation_url || '&authuser=' || '1' || ')' as session_id_url,
+        CONCAT(
+            '[TE](',
+            'https://data.corp.google.com/sites/epgvfa2lqeur/att_transcript_explorer/?',
+            'f=conversation_create_date:eq:',
+            CAST(UNIX_MILLIS(TIMESTAMP(base_interactions.session_request_time_start)) AS STRING),
+            '&f=session_id:eq:',
+            base_interactions.session_id,
+            ')') AS te_url
+      ,ifnull(easy_pay.easy_pay_offered_flag, 'No') as easy_pay_offered_flag
+      ,ifnull(easy_pay.easy_pay_accepted_flag, 'No') as easy_pay_accepted_flag
+      ,CASE WHEN ifnull(easy_pay.easy_pay_offered_flag, 'No') != 'Yes' THEN 'easy_pay_no_offer'
+            WHEN easy_pay.easy_pay_accepted_flag != 'Yes' THEN 'easy_pay_rejected'
+            WHEN easy_pay.easy_pay_accepted_flag ='Yes' THEN 'easy_pay_accepted'
+            ELSE 'na'
+            END as easy_pay_type
+      ,conversation_turns.turn_count
+from conv_sub_info as base_interactions
+  LEFT OUTER JOIN (SELECT * FROM ${ref("dataform_common_lookups_tvc")}) as links on base_interactions.session_id = links.session_id
+  LEFT OUTER JOIN (SELECT * FROM ${ref("dataform_conversation_heuristic_outcome")}) as heuristic_outcome on base_interactions.session_id = heuristic_outcome.session_id
+  LEFT OUTER JOIN (SELECT * FROM ${ref("dataform_conversation")}) as att_conversation on base_interactions.session_id = att_conversation.session_id
+  LEFT OUTER join easy_pay as easy_pay on base_interactions.session_id = easy_pay.session_id
+  LEFT OUTER JOIN conversation_turns as conversation_turns on base_interactions.session_id = conversation_turns.session_id
+where 1=1 

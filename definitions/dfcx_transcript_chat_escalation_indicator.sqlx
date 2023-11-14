@@ -1,7 +1,7 @@
 config {
   type: "incremental",
   bigquery: {
-    partitionBy: "DATE(request_time)"
+    partitionBy: "DATE(session_start_time)"
   },
   assertions: {
     uniqueKey: ["session_id", "position"],
@@ -36,7 +36,8 @@ stg_escalation_ind as (
     QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, position ORDER BY step DESC) = 1
 )
 SELECT
-    request_time
+    session_start_time
+    ,request_time
     ,conversation.session_id
     ,conversation.position
     ,ifnull(escalation_1.escalation_indicator, False) as escalation_indicator

@@ -1,5 +1,5 @@
 {
-  "defaultSchema": "dfcx",
+  "defaultSchema": "dataform",
   "assertionSchema": "dataform_assertions",
   "warehouse": "bigquery",
   "defaultDatabase": "att-aam-external",

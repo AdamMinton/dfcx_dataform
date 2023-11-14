@@ -8,7 +8,8 @@ config {
 }
 
 SELECT 
-   session_id
+  session_start_time
+  ,session_id
   ,position
   ,request_time
   ,JSON_VALUE(session_parameters,'$.AAMIntentFromGDF') as aam_intent_from_gdf

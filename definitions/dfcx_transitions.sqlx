@@ -1,7 +1,7 @@
 config {
   type: "table",
   bigquery: {
-    partitionBy: "DATE(session_request_time_start)"
+    partitionBy: "DATE(session_start_time)"
   },
   description: "DFCX transition information",
 }
@@ -26,7 +26,7 @@ last_turns AS (
 transitions AS (
   SELECT
     turns.project_id,
-    turns.session_request_time_start,
+    turns.session_start_time,
     turns.location,
     turns.agent_id,
     turns.session_id,
@@ -83,7 +83,7 @@ transitions AS (
   WHERE TRUE
 )
 SELECT
-  transitions.session_request_time_start,
+  transitions.session_start_time,
   transitions.project_id,
   transitions.location,
   transitions.agent_id,

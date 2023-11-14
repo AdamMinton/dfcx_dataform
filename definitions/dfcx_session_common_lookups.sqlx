@@ -1,5 +1,8 @@
 config {
   type: "table",
+  bigquery: {
+    partitionBy: "DATE(session_start_time)"
+  },
   assertions: {
     uniqueKey: ["session_id"],
     nonNull: ["session_id"]
@@ -8,13 +11,13 @@ config {
 }
 
 WITH conversation as (
-  SELECT project_id, location, agent_id, session_id, MIN(session_request_time_start) as conversation_create_date
+  SELECT project_id, location, agent_id, session_id, session_start_time
   FROM ${ref("dfcx_transcript")}
-  GROUP BY 1,2,3,4
+  GROUP BY 1,2,3,4,5
 )
 ,prep as (
 SELECT 
-  conversation_create_date
+  conversation.session_start_time
   ,conversation.project_id
   ,conversation.location
   ,conversation.agent_id
@@ -42,11 +45,11 @@ SELECT
     'timeRange=',
     FORMAT_DATETIME(
       '%Y-%m-%dT%H:%M:%S.000Z',
-      DATETIME(conversation_info.session_request_time_start, 'UTC')),
+      DATETIME(conversation_info.session_start_time, 'UTC')),
     '%2F',
     FORMAT_DATETIME(
       '%Y-%m-%dT%H:%M:%S.000Z',
-      DATETIME(conversation_info.session_request_time_start, 'UTC')),
+      DATETIME(conversation_info.session_start_time, 'UTC')),
     '--PT15M;',
     '?',
     'project=',
@@ -54,7 +57,7 @@ SELECT
   ,CONCAT(
     'https://data.corp.google.com/sites/epgvfa2lqeur/att_transcript_explorer/?',
     'f=conversation_create_date:eq:',
-    CAST(UNIX_MILLIS(TIMESTAMP(DATE(conversation_info.session_request_time_start))) AS STRING),
+    CAST(UNIX_MILLIS(TIMESTAMP(DATE(conversation_info.session_start_time))) AS STRING),
     '&f=conversation_id:eq:',
     conversation.session_id) as transcript_explorer_link
 FROM conversation

@@ -2,7 +2,7 @@ config {
 
   type: "incremental",
   bigquery: {
-    partitionBy: "DATE(request_time)"
+    partitionBy: "DATE(session_start_time)"
   },
   assertions: {
     uniqueKey: ["session_id", "position"],
@@ -23,6 +23,7 @@ SELECT
   session_id
   ,position
   ,request_time
+  ,session_start_time
   ,ARRAY_REVERSE(responses)[0] as last_response
 FROM 
 (

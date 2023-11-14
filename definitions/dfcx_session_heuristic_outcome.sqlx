@@ -1,5 +1,8 @@
 config {
   type: "table",
+  bigquery: {
+    partitionBy: "DATE(session_start_time)"
+  },
   assertions: {
     uniqueKey: ["session_id"],
     nonNull: ["session_id"]
@@ -13,7 +16,7 @@ conversations as (
   SELECT
     conversation.session_id
     ,conversation.position
-    ,conversation.session_request_time_start
+    ,conversation.session_start_time
     ,JSON_VALUE(session_parameters,'$.goal') as goal
     ,conversation.event
     ,conversation.intent_display_name
@@ -48,11 +51,12 @@ conversations as (
 ,last_turn as (
   SELECT 
     session_id
+    ,session_start_time
     ,MAX(final_interaction_head_intent) as final_interaction_head_intent
     ,MAX(position) as end_position
-    ,MAX(session_request_time_start) as conversation_start_date
+    -- ,MAX(session_request_time_start) as conversation_start_date
   FROM conversations
-  GROUP BY 1
+  GROUP BY 1,2
 )
 ,first_req_agent_turn as (
   SELECT session_id, MIN(position) as first_position_req_agent
@@ -98,7 +102,8 @@ conversations as (
 )
 ,consolidated_data as (
 SELECT 
-  last_turn.session_id
+  conversations.session_start_time
+  ,last_turn.session_id
   ,last_turn.final_interaction_head_intent
   ,conversations.position
   ,conversations.event
@@ -113,7 +118,7 @@ SELECT
   ,case when first_req_agent_turn.first_position_req_agent <= conversations.position THEN first_req_agent_turn.first_position_req_agent ELSE NULL END as first_position_req_agent
   ,case when '00000000-0000-0000-0000-000000000000' IN UNNEST(unique_flows) THEN TRUE ELSE FALSE END as came_from_aep
   ,conversations.source_page_display_name as last_source_page
-  ,IF(last_turn.conversation_start_date >= '2023-06-08' AND last_turn.final_interaction_head_intent like 'bill_%',TRUE,FALSE) as billing_intent_exception_for_last_agent_response
+  ,IF(DATE(conversations.session_start_time) >= '2023-06-08' AND last_turn.final_interaction_head_intent like 'bill_%',TRUE,FALSE) as billing_intent_exception_for_last_agent_response
 FROM last_turn
   LEFT JOIN conversations 
     ON last_turn.session_id = conversations.session_id
@@ -132,7 +137,8 @@ FROM last_turn
 )
 ,final_tagging as (
 SELECT 
-  session_id
+  session_start_time
+  ,session_id
   ,position
   ,CASE WHEN event = 'Hangup' THEN TRUE ELSE FALSE END as hangup
   ,CASE WHEN goal = 'DetermineNextRoute' OR determine_next_route = TRUE THEN TRUE ELSE FALSE END as routed_away_during_last_turn

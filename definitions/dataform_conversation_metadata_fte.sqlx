@@ -41,6 +41,7 @@ base_data AS (
     ,JSON_VALUE(dfcx.request,'$.queryInput.event.event') as event
     ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.responseMessages') as response_messages
     ,IF(JSON_VALUE(conversation_signals,'$.turnSignals.agentEscalated')='true',TRUE,FALSE) as live_agent_handoff
+    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Alternative Matched Intents') as alternative_matched_intents
   FROM `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` as dfcx
   WHERE TRUE
     AND request_time > request_time_checkpoint
@@ -174,6 +175,20 @@ base_data AS (
   INNER JOIN UNNEST(JSON_QUERY_ARRAY(response,'$.text.text')) as response_text with offset as response_text_offset
   GROUP BY 1,2
 )
+,alternative_matched_intents as (
+  SELECT 
+    session_id
+    ,position
+    ,ARRAY_AGG(
+      STRUCT(
+        JSON_VALUE(alternative_matched_intent,'$.DisplayName') as alternative_matched_intent
+        ,SAFE_CAST(JSON_VALUE(alternative_matched_intent,'$.Score') as NUMERIC) as score
+      ) ORDER BY SAFE_CAST(JSON_VALUE(alternative_matched_intent,'$.Score') as NUMERIC) DESC
+    ) as alternative_matched_intents
+  FROM base_data
+    ,UNNEST(alternative_matched_intents) as alternative_matched_intent WITH offset as alternative_matched_intents_offset
+  GROUP BY 1,2
+)
 SELECT 
   base_data.project_id
   ,base_data.location
@@ -206,9 +221,11 @@ SELECT
   ,base_data.session_parameters
   ,execution_sequence_agg.execution_sequence
   ,webhook_agg.webhooks
+  ,alternative_matched_intents.alternative_matched_intents
 FROM base_data
   LEFT JOIN execution_sequence_agg USING (session_id, position)
   LEFT JOIN webhook_agg USING (session_id, position)
   LEFT JOIN source_and_target_page USING (session_id, position)
   LEFT JOIN session USING (session_id)
   LEFT JOIN agent_response USING (session_id, position)
+  LEFT JOIN alternative_matched_intents USING (session_id, position)

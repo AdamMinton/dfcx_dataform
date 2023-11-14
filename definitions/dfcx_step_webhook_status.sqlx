@@ -1,8 +1,7 @@
 config {
-
   type: "incremental",
   bigquery: {
-    partitionBy: "DATE(request_time)"
+    partitionBy: "DATE(session_start_time)"
   },
   assertions: {
     uniqueKey: ["session_id", "position", "step"],
@@ -25,6 +24,7 @@ WITH extract_status_values as (
   ,position
   ,step
   ,request_time
+  ,session_start_time
   ,JSON_VALUE(session_parameters_updated,'$.BillDisputeTypeStatus') as BillDisputeTypeStatus
   ,JSON_VALUE(session_parameters_updated,'$.StorePaymentProfileStatus') as StorePaymentProfileStatus
   ,JSON_VALUE(session_parameters_updated,'$.CdeDecisionStatus') as CdeDecisionStatus
@@ -55,7 +55,7 @@ WITH extract_status_values as (
   ,JSON_VALUE(session_parameters_updated,'$.UpdateContactInfoStatus') as UpdateContactInfoStatus
   ,JSON_VALUE(session_parameters_updated,'$.daasStatus') as daasStatus
   ,JSON_VALUE(session_parameters_updated,'$.result') as result
-  FROM ${ref("dataform_conversation_metadata_fte")} as a
+  FROM ${ref("dfcx_transcript")} as a
     ,UNNEST(a.webhooks) as webhook
   WHERE TRUE
     AND request_time > request_time_checkpoint 

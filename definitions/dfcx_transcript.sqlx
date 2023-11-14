@@ -2,7 +2,7 @@ config {
 
   type: "incremental",
   bigquery: {
-    partitionBy: "DATE(request_time)"
+    partitionBy: "DATE(session_start_time)"
   },
   assertions: {
     uniqueKey: ["session_id", "position"],
@@ -155,7 +155,8 @@ base_data AS (
 ,session as (
   SELECT 
     session_id
-    ,MIN(request_time) as session_request_time_start
+    ,MIN(request_time) as session_start_time
+    ,MAX(request_time) as session_end_time
   FROM base_data
   GROUP BY 1
 )
@@ -194,7 +195,8 @@ SELECT
   ,base_data.location
   ,base_data.agent_id
   ,base_data.session_id
-  ,session.session_request_time_start
+  ,session.session_start_time
+  ,session.session_end_time
   ,base_data.response_id
   ,base_data.request_time
   ,base_data.position

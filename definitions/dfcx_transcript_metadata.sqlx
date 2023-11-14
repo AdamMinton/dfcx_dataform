@@ -1,7 +1,7 @@
 config {
     type: "incremental",
     bigquery: {
-        partitionBy: "DATE(request_time)"
+        partitionBy: "DATE(session_start_time)"
     },
     assertions: {
         uniqueKey: ["session_id", "position"],
@@ -10,10 +10,22 @@ config {
     description: "Additional Transcript Transformations",
 }
 
+pre_operations {
+  DECLARE
+    request_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `select max(request_time) from ${self()}`,
+            `select timestamp("2000-01-01")`)
+    }
+    );
+}
+
 WITH
   final_data AS (
   SELECT
     conversation.request_time,
+    conversation.session_start_time,
     conversation.session_id,
     conversation.agent_response,
     -- nullif(trim(buttons.message),'') as message,
@@ -35,7 +47,7 @@ WITH
     conversation.session_parameters,
     conversation.execution_sequence
   FROM
-    ${ref("dataform_conversation_metadata_fte")} AS conversation
+    ${ref("dfcx_transcript")} AS conversation
     -- LEFT JOIN ais_ccai_eng.att_chat_message_buttons AS buttons
     --   ON
     --     conversation.session_id = buttons.session_id
@@ -84,6 +96,7 @@ WITH
   final_data_wip AS (
   SELECT
     DISTINCT src.request_time,
+    src.session_start_time,
     src.project_id,
     session_id,
     position,
@@ -194,6 +207,7 @@ WITH
   final AS (
   SELECT
     master.request_time,
+    master.session_start_time,
     master.project_id,
     master.session_id,
     master.position,
@@ -230,6 +244,7 @@ WITH
   data_final AS (
   SELECT
     request_time,
+    session_start_time,
     project_id,
     session_id,
     agent_response,
@@ -337,6 +352,7 @@ WITH
     TRUE )
 SELECT
   request_time,
+  session_start_time,
   dt.session_id,
   dt.position
   -- , dt.buttons
@@ -397,14 +413,3 @@ ON
   dt.session_id = alt_intent_final.session_id
   AND dt.position = alt_intent_final.position
   -- GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26
-
-pre_operations {
-  DECLARE
-    request_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `select max(request_time) from ${self()}`,
-            `select timestamp("2000-01-01")`)
-    }
-    );
-}

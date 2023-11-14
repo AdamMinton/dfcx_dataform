@@ -21,8 +21,8 @@ conversations as (
     ,conversation.source_page_display_name
     ,conversation_info.final_interaction_head_intent
     ,conversation.execution_sequence
-  FROM ${ref("dataform_conversation_metadata_fte")} as conversation
-    INNER JOIN ${ref("dataform_conversation")} as conversation_info USING (session_id)
+  FROM ${ref("dataform_transcript")} as conversation
+    INNER JOIN ${ref("dataform_session_metadata")} as conversation_info USING (session_id)
   WHERE 1=1
 )
 ,response_message as (

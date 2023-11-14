@@ -11,7 +11,7 @@ webhook_failures as (
   SELECT session_id
   ,position
   , MAX(CASE WHEN webhook_status <> 'OK' THEN TRUE ELSE FALSE END) as has_webhook_failure
-  FROM ${ref("dataform_conversation_metadata_fte")}
+  FROM ${ref("dataform_transcript")}
     ,UNNEST(webhooks) as webhook
   WHERE TRUE
   GROUP BY 1,2
@@ -20,7 +20,7 @@ last_turns AS (
   SELECT
     session_id,
     MAX(position) AS last_position
-  FROM ${ref("dataform_conversation_metadata_fte")} AS turns
+  FROM ${ref("dataform_transcript")} AS turns
   GROUP BY session_id
 ),
 transitions AS (
@@ -64,20 +64,20 @@ transitions AS (
     turns.language_code,
     turns.source_flow_display_name AS flow_before,
     turns.flow_display_name AS flow_after,
-  FROM ${ref("dataform_conversation_metadata_fte")} AS turns
+  FROM ${ref("dataform_transcript")} AS turns
     INNER JOIN webhook_failures 
       ON turns.session_id = webhook_failures.session_id
       AND turns.position = webhook_failures.position
-    INNER JOIN ${ref("dataform_conversation")} AS conversation
+    INNER JOIN ${ref("dataform_session_metadata")} AS conversation
       ON turns.session_id = conversation.session_id
-    INNER JOIN ${ref("dataform_conversation_interaction")} AS interaction
+    INNER JOIN ${ref("dataform_interaction")} AS interaction
       ON turns.position BETWEEN interaction.start_interaction_position and interaction.end_interaction_position
       AND turns.session_id = interaction.session_id
     INNER JOIN last_turns
       ON turns.session_id = last_turns.session_id
-    INNER JOIN ${ref("dataform_conversation_heuristic_outcome")} as heuristic_outcome
+    INNER JOIN ${ref("dataform_session_heuristic_outcome")} as heuristic_outcome
       ON turns.session_id = heuristic_outcome.session_id
-    INNER JOIN ${ref("dataform_transcript")} as transcript
+    INNER JOIN ${ref("dataform_transcript_metadata")} as transcript
       ON turns.session_id = transcript.session_id
       AND turns.position = transcript.position
   WHERE TRUE

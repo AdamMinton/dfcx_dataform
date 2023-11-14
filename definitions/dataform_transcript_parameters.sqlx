@@ -37,5 +37,5 @@ SELECT
       ) as adjustment_list
   ,JSON_VALUE_ARRAY(session_parameters,'$.pendingadjustmentdescription') as pending_adjustment_description
   ,JSON_VALUE_ARRAY(session_parameters,'$.PendingCreditAdjustmentDescriptionForVoice') as pending_adjustment_description_for_voice
-FROM ${ref("dataform_conversation_metadata_fte")}
+FROM ${ref("dataform_transcript")}
 WHERE TRUE

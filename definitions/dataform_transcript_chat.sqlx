@@ -27,7 +27,7 @@ SELECT
 FROM 
 (
   SELECT *
-  FROM ${ref("dataform_conversation_metadata_fte")}
+  FROM ${ref("dataform_transcript")}
     ,UNNEST(execution_sequence) as execution_step
   WHERE TRUE
     AND ARRAY_LENGTH(responses) > 0

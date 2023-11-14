@@ -1,410 +1,231 @@
 config {
-    type: "incremental",
-    bigquery: {
-        partitionBy: "DATE(request_time)"
-    },
-    assertions: {
-        uniqueKey: ["session_id", "position"],
-        nonNull: ["session_id", "position"]
-    },
-    description: "Additional Transcript Transformations",
-}
 
-WITH
-  final_data AS (
-  SELECT
-    conversation.request_time,
-    conversation.session_id,
-    conversation.agent_response,
-    -- nullif(trim(buttons.message),'') as message,
-    -- buttons.message_uuid,
-    NULLIF( TRIM( REPLACE( JSON_VALUE(session_parameters,'$.userAgentHeader'), 'Google-Dialogflow-', '')), '') AS channel,
-    CASE
-      WHEN conversation.optional_dtmf_digits IS NOT NULL THEN IF (conversation.user_utterance LIKE 'dtmf%','(dtmf) ' || conversation.user_utterance,'(dtmf) ' || optional_dtmf_digits)
-    ELSE
-    conversation.user_utterance
-  END
-    AS consolidated_user_utterance,
-    CAST(match_type AS string) AS match_type,
-    -- ARRAY_AGG(buttons.button_text IGNORE NULLS ORDER BY buttons.button_order) as buttons,
-    conversation.project_id,
-    conversation.position,
-    conversation.intent_display_name,
-    conversation.alternative_matched_intents,
-    conversation.webhooks,
-    conversation.session_parameters,
-    conversation.execution_sequence
-  FROM
-    ${ref("dataform_conversation_metadata_fte")} AS conversation
-    -- LEFT JOIN ais_ccai_eng.att_chat_message_buttons AS buttons
-    --   ON
-    --     conversation.session_id = buttons.session_id
-    --     AND conversation.message_id = buttons.message_id
-  WHERE
-    TRUE
-    AND request_time > request_time_checkpoint
-    -- GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9,11,12,13
-    ),
-  alt_intent_final AS (
-  SELECT
-    dt.session_id,
-    dt.position,
-    dt.intent_display_name,
-    ARRAY_AGG(STRUCT(alternative_matched_intent AS alternative_matched_intent,
-        score AS score)) AS alternative_matched_intents
-  FROM
-    final_data AS dt,
-    UNNEST(dt.alternative_matched_intents) AS alt_intent
-  WHERE
-    TRUE
-    AND intent_display_name <> alt_intent.alternative_matched_intent
-  GROUP BY
-    1,
-    2,
-    3 ),
-  webhook_infobot_info AS (
-  SELECT
-    session_id,
-    position,
-    MAX(
-    IF
-      (LOWER((ARRAY_REVERSE(SPLIT(webhook_url, "/"))[
-          OFFSET
-            (0)]) ) LIKE '%infobot%', (ARRAY_REVERSE(SPLIT(webhook_url, "/"))[
-        OFFSET
-          (0)]), NULL)) AS webhook
-  FROM
-    final_data,
-    UNNEST(webhooks) AS webhook
-  WHERE
-    TRUE
-  GROUP BY
-    1,
-    2 ),
-  final_data_wip AS (
-  SELECT
-    DISTINCT src.request_time,
-    src.project_id,
-    session_id,
-    position,
-    agent_response,
-    -- CASE
-    --   WHEN src.message IS NULL AND uuid_response.message IS NULL THEN NULL
-    --   ELSE
-    --     trim(
-    --       CONCAT(
-    --         IFNULL(src.message, ''), '|', IFNULL(uuid_response.message, '')),
-    --       '|')
-    --   END AS message,
-    -- message_uuid,
-    consolidated_user_utterance,
-    match_type,
-    -- CASE
-    --   WHEN buttons IS NULL AND uuid_response.button_labels IS NULL THEN NULL
-    --   ELSE array_concat(IFNULL(buttons, []), IFNULL(uuid_response.button_labels, []))
-    --   END AS buttons,
-    -- case when uuid_response.CardList_labels is not null then 'Y' else null end as Is_CardList_labels,
-    -- case when uuid_response.Card_labels is not null then 'Y' else null end as Is_Card_labels,
-    -- case when uuid_response.Tip_labels is not null then 'Y' else null end as Is_Tip_labels,
-    -- case when uuid_response.ChoiceList_labels is not null then 'Y' else null end as Is_ChoiceList_labels,
-    -- case when uuid_response.Form_labels is not null then 'Y' else null end as Is_Form_labels,
-    -- case when uuid_response.MultiForm_labels is not null then 'Y' else null end as Is_MultiForm_labels,
-    -- case when uuid_response.Modal_labels is not null then 'Y' else null end as Is_Modal_labels,
-    src.channel
-  FROM
-    final_data AS src
-    -- LEFT JOIN att_chat_decode_uuid_response_temp AS uuid_response
-    -- ON src.message_uuid = uuid_response.uuid and replace(replace(src.channel,'MWEB','WEB'),'undefined','WEB') = uuid_response.channel
-    ),
-  get_session_param AS (
-  SELECT
-    session_id,
-    position
-    --SKIPPED ChatProductsOnID
-    ,
-    JSON_VALUE(session_parameters,'$.primary_phnumber') AS PrimaryPhnNumber,
-    JSON_VALUE(session_parameters,'$.secondary_phnumber') AS SecondaryPhnNumber,
-    JSON_VALUE(session_parameters,'$.new-number') AS NewPhnNumber,
-    JSON_VALUE(session_parameters,'$.old-number') AS OldPhnNumber
-    --SKIPPED ChargeChangeList
-    --SKIPPED PredictiveListOutput
-    ,
-    JSON_VALUE(session_parameters,'$.source_count') AS source_count,
-    JSON_VALUE(session_parameters,'$.source_link') AS source_link,
-    JSON_VALUE(session_parameters,'$.source_snippet') AS source_snippet,
-    JSON_VALUE(session_parameters,'$.source_title') AS source_title,
-    JSON_VALUE(session_parameters,'$.infobot_confidence') AS infobot_confidence,
-    JSON_VALUE(session_parameters,'$.infobot_match') AS infobot_match,
-    JSON_VALUE(session_parameters,'$.infobot_was_link_provided') AS infobot_was_link_provided,
-    JSON_VALUE(session_parameters,'$.answer') AS answer,
-    JSON_VALUE(session_parameters,'$.answer_count') AS answer_count
-  FROM
-    final_data ),
-  -- handling_session_param AS (
-  --   SELECT DISTINCT session_id, position, buttons
-  --   FROM final_data_wip AS ff, UNNEST(ff.buttons) AS f_buttons
-  --   WHERE f_buttons LIKE '%$session.params.%'
-  -- ),
-  -- handling_session_param_final AS (
-  --   SELECT DISTINCT
-  --     session_id, position, 1 AS session_param_ind, hsp_buttons
-  --   FROM handling_session_param AS hsp, UNNEST(hsp.buttons) AS hsp_buttons
-  --   WHERE hsp_buttons LIKE '%$%'
-  -- ),
-  -- data_without_session_param AS (
-  --   SELECT DISTINCT
-  --     session_id, position, array_agg(trim(hsp_buttons)) AS hsp_buttons
-  --   FROM handling_session_param AS hsp, UNNEST(hsp.buttons) AS hsp_buttons
-  --   WHERE hsp_buttons NOT LIKE '%$%'
-  --   GROUP BY 1, 2
-  -- ),
-  -- denormalize_table AS (
-  --   SELECT *
-  --   FROM
-  --     get_session_param
-  --       UNPIVOT(
-  --         session_param_value
-  --           FOR
-  --             session_param_field IN (
-  --               ChatProductsOnID, PrimaryPhnNumber, SecondaryPhnNumber,
-  --               NewPhnNumber, OldPhnNumber, ChargeChangeList,
-  --               PredictiveListOutput))
-  -- ),
-  -- decoded_session_param AS (
-  --   SELECT
-  --     hspf.session_id,
-  --     hspf.position,
-  --     hspf.session_param_ind,
-  --      array_agg(
-  --       CASE
-  --         WHEN hspf.hsp_buttons LIKE '%$%'
-  --           THEN
-  --             unnested_session_param_value
-  --         ELSE hspf.hsp_buttons
-  --         END) AS buttons
-  --   FROM handling_session_param_final AS hspf
-  --   LEFT JOIN denormalize_table AS dt
-  --     ON
-  --       hspf.session_id = dt.session_id
-  --       AND hspf.position = dt.position
-  --       AND replace(replace(trim(hspf.hsp_buttons), '$session.params.output.', ''), '$session.params.',  '')  = dt.session_param_field
-  --     , unnest(dt.session_param_value) as unnested_session_param_value
-  --  GROUP BY 1, 2, 3
-  -- ),
-  final AS (
-  SELECT
-    master.request_time,
-    master.project_id,
-    master.session_id,
-    master.position,
-    master.agent_response,
-    -- master.message,
-    -- master.message_uuid,
-    master.consolidated_user_utterance,
-    -- CASE
-    --     WHEN wip.session_param_ind = 1
-    --       THEN
-    --         array_concat(ifnull(final.hsp_buttons, []), ifnull(wip.buttons, []))
-    --     ELSE array_concat(ifnull(master.buttons, []), ifnull(wip.buttons, []))
-    --     END AS buttons,
-    -- master.Is_CardList_labels,
-    -- master.Is_Card_labels,
-    -- master.Is_Tip_labels,
-    -- master.Is_ChoiceList_labels,
-    -- master.Is_Form_labels,
-    -- master.Is_MultiForm_labels,
-    -- master.Is_Modal_labels,
-    master.channel,
-    master.match_type
-  FROM
-    final_data_wip AS master
-    -- LEFT JOIN data_without_session_param AS final
-    --   ON
-    --     master.session_id = final.session_id
-    --     AND master.position = final.position
-    -- LEFT JOIN decoded_session_param AS wip
-    --   ON
-    --     master.session_id = wip.session_id
-    --     AND master.position = wip.position
-    ),
-  data_final AS (
-  SELECT
-    request_time,
-    project_id,
-    session_id,
-    agent_response,
-    position,
-    -- message,
-    -- message_uuid,
-    consolidated_user_utterance,
-    -- CASE WHEN ARRAY_LENGTH(buttons) = 0 THEN NULL ELSE buttons END AS buttons,
-    -- Is_CardList_labels,
-    -- Is_Card_labels,
-    -- Is_Tip_labels,
-    -- Is_ChoiceList_labels,
-    -- Is_Form_labels,
-    -- Is_MultiForm_labels,
-    -- Is_Modal_labels
-    channel,
-    CASE
-      WHEN webhook_infobot_info.webhook IS NOT NULL THEN match_type || '_INFOBOT'
-    ELSE
-    match_type
-  END
-    AS match_type
-  FROM
-    final
-  LEFT JOIN
-    webhook_infobot_info
-  USING
-    (session_id,
-      position) ),
-  get_consecutive_no_match AS (
-  SELECT
-    session_id,
-    position,
-    CASE
-      WHEN match_type = 'NO_MATCH_INFOBOT' AND LEAD(match_type) OVER(PARTITION BY session_id ORDER BY session_id, position) = 'NO_MATCH_INFOBOT' THEN TRUE
-    ELSE
-    NULL
-  END
-    AS consecutive_no_match
-  FROM
-    data_final
-  WHERE
-    project_id LIKE '%chat%' ),
-  execution_steps_raw AS (
-  SELECT
-    final_data.session_id,
-    final_data.position,
-    es.step,
-    es.flow_display_name,
-    TRIM(es.page_display_name) AS page_display_name,
-    CASE
-      WHEN es.page_display_name = 'Live agent handoff' THEN NULL
-    ELSE
-    JSON_VALUE(session_parameters_updated,'$.Event')
-  END
-    AS event_updated
-  FROM
-    final_data,
-    UNNEST(execution_sequence) AS es
-  WHERE
-    1=1 ),
-  execution_steps_event AS (
-  SELECT
-    session_id,
-    position,
-    flow_display_name,
-    page_display_name,
-    LAST_VALUE(event_updated IGNORE NULLS) OVER (PARTITION BY session_id, position ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING ) AS event_updated
-  FROM
-    execution_steps_raw
-  WHERE
-    TRUE
-    AND event_updated IS NOT NULL QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, position ORDER BY step DESC) = 1
-    --grab the last
-    ),
-  conv AS (
-  SELECT
-    session_id,
-    position,
-    JSON_VALUE(session_parameters,'$.Event') AS event
-  FROM
-    final_data
-  WHERE
-    TRUE
-    -- AND project_id like '%voice%'
-    ),
-  event_parameters AS (
-  SELECT
-    conv.session_id,
-    conv.position,
-  IF
-    (event IS NULL,null,LAST_VALUE(execution_steps_event.flow_display_name IGNORE NULLS) OVER (PARTITION BY conv.session_id ORDER BY conv.position ASC RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW )) AS event_flow,
-  IF
-    (event IS NULL,null,LAST_VALUE(execution_steps_event.page_display_name IGNORE NULLS) OVER (PARTITION BY conv.session_id ORDER BY conv.position ASC RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW )) AS event_page,
-  IF
-    (event IS NULL,null,LAST_VALUE(execution_steps_event.event_updated IGNORE NULLS) OVER (PARTITION BY conv.session_id ORDER BY conv.position ASC RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW )) AS event
-  FROM
-    conv
-  LEFT OUTER JOIN
-    execution_steps_event
-  USING
-    (session_id,
-      position)
-  WHERE
-    TRUE )
-SELECT
-  request_time,
-  dt.session_id,
-  dt.position
-  -- , dt.buttons
-  -- infobot agent response
-  ,
-  COALESCE(dt.agent_response,'') AS consolidated_agent_response
-  -- , case when coalesce(dt.message,'') = '$session.params.answer<br><a href="$session.params.source_link">$session.params.source_title</a>'
-  --     then infobot_params.answer || ' [' || infobot_params.source_title || '](' || infobot_params.source_link || ')'
-  --   else
-  --     coalesce(dt.agent_response,'')
-  --     || coalesce(dt.message,'') --|| coalesce(dt.message_uuid,'')
-  --     || coalesce(ARRAY_TO_STRING(dt.buttons,'--'),'')
-  --     || case when dt.Is_CardList_labels = 'Y' then '~Is Card List Available: Yes' else '' end
-  --     || case when dt.Is_Card_labels = 'Y' then '~Is Card Available: Yes' else '' end
-  --     || case when dt.Is_Tip_labels = 'Y' then '~Is Tip Available: Yes' else '' end
-  --     || case when dt.Is_ChoiceList_labels = 'Y' then '~Is Choice List Available: Yes' else '' end
-  --     || case when dt.Is_Form_labels = 'Y' then '~Is Form Available: Yes' else '' end
-  --     || case when dt.Is_MultiForm_labels = 'Y' then '~Is Multi Form Available: Yes' else '' end
-  --     || case when dt.Is_Modal_labels = 'Y' then '~Is Modal Available: Yes' else '' end
-  --   end as consolidated_agent_response
-  -- , dt.message_uuid
-  ,
-  dt.consolidated_user_utterance,
-  ep.event_flow,
-  ep.event_page,
-  ep.event,
-  dt.match_type,
-  infobot_params.source_link,
-  infobot_params.source_title,
-  infobot_params.infobot_confidence,
-  infobot_params.infobot_was_link_provided,
-  infobot_params.infobot_match,
-  consecutive_no_match,
-  alt_intent_final.alternative_matched_intents
-FROM
-  data_final AS dt
-  -- left join att_trans_steps as ats
-  --   ON dt.session_id = ats.session_id
-  --   AND dt.position = ats.position
-LEFT JOIN
-  event_parameters AS ep
-ON
-  dt.session_id = ep.session_id
-  AND dt.position = ep.position
-LEFT JOIN
-  get_session_param AS infobot_params
-ON
-  dt.session_id = infobot_params.session_id
-  AND dt.position = infobot_params.position
-LEFT JOIN
-  get_consecutive_no_match
-ON
-  dt.session_id = get_consecutive_no_match.session_id
-  AND dt.position = get_consecutive_no_match.position
-LEFT JOIN
-  alt_intent_final
-ON
-  dt.session_id = alt_intent_final.session_id
-  AND dt.position = alt_intent_final.position
-  -- GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26
+  type: "incremental",
+  bigquery: {
+    partitionBy: "DATE(request_time)"
+  },
+  assertions: {
+    uniqueKey: ["session_id", "position"],
+    nonNull: ["session_id", "position"]
+  },
+  description: "Main reporting table for DFCX conversations",
+}
 
 pre_operations {
-  DECLARE
-    request_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `select max(request_time) from ${self()}`,
-            `select timestamp("2000-01-01")`)
-    }
-    );
+  declare request_time_checkpoint default (
+    ${when(incremental(),
+    `select max(request_time) from ${self()}`,
+    `select timestamp("2000-01-01")`)}
+  );
 }
+
+WITH 
+base_data AS (
+  SELECT  
+    dfcx.project_id as project_id
+    ,SPLIT(dfcx.conversation_name,'/')[SAFE_OFFSET(3)] as location
+    ,dfcx.agent_id as agent_id
+    ,ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] as session_id
+    ,JSON_VALUE(dfcx.response,'$.responseId') as response_id
+    ,dfcx.request_time as request_time
+    ,ROW_NUMBER() OVER (PARTITION BY ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] ORDER BY request_time ASC) as position
+    ,JSON_VALUE(dfcx.request,'$.queryInput.text.text') as user_utterance
+    ,JSON_VALUE(dfcx.request,'$.queryInput.dtmf.digits') as optional_dtmf_digits
+    ,ARRAY_REVERSE(SPLIT(JSON_VALUE(dfcx.response,'$.queryResult.intent.name'),'/'))[SAFE_OFFSET(0)] as intent_display_id
+    ,JSON_VALUE(dfcx.response,'$.queryResult.intent.displayName') as intent_display_name
+    ,JSON_VALUE(dfcx.response,'$.queryResult.match.matchType') as match_type
+    ,JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') as intent_confidence_score
+    ,TO_JSON(COALESCE(JSON_QUERY(dfcx.response,'$.queryResult.parameters'),JSON_OBJECT())) as session_parameters
+    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Execution Sequence') as execution_sequence
+    ,dfcx.language_code
+    ,JSON_VALUE(dfcx.request,'$.queryInput.event.event') as event
+    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.responseMessages') as response_messages
+    ,IF(JSON_VALUE(conversation_signals,'$.turnSignals.agentEscalated')='true',TRUE,FALSE) as live_agent_handoff
+    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Alternative Matched Intents') as alternative_matched_intents
+  FROM `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` as dfcx
+  WHERE TRUE
+    AND request_time > request_time_checkpoint
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY request_time DESC) = 1
+)
+,execution_sequence as (
+  SELECT 
+    step + 1 as step
+    ,session_id
+    ,position
+    ,REGEXP_REPLACE(REGEXP_REPLACE(TO_JSON_STRING(execution_sequence),r'Step \d+','Step X')
+      ,r'SessionParameters\(Updated\)','SessionParameters') as execution_sequence_step
+    FROM base_data
+      LEFT JOIN UNNEST(base_data.execution_sequence) as execution_sequence with OFFSET as step
+  WHERE 1=1
+)
+,execution_sequence_parse as (
+  SELECT
+    session_id
+    ,position
+    ,step
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.FlowId') as flow_id_initial_state
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.Name') as flow_display_name_initial_state
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.PageId') as page_id_initial_state
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.Name') as page_display_name_initial_state
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.Status') as status_initial_state
+    ,JSON_QUERY(execution_sequence_step,'$.Step X.InitialState.SessionParameters') as session_parameters_initial
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.FlowId') as flow_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.Name') as flow_display_name
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.PageId') as page_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.Name') as page_display_name
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.Status') as status
+    ,JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SessionParameters') as session_parameters_updated
+    ,JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SystemFunctionResults') as system_function_results
+    ,JSON_QUERY_ARRAY(execution_sequence_step,'$.Step X.FunctionExecution.Responses') as responses
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredTransitionRouteId') as triggered_transition_route_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredIntent') as triggered_intent
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredCondition') as triggered_condition
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TargetFlow') as target_flow_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TargetPage') as target_page_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.ID') as webhook_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.DisplayName') as webhook_display_name
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency') as webhook_latency
+    ,CAST(REGEXP_EXTRACT(JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency')
+      ,r'(\d+)') as INT64) as webhook_latency_ms
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status') as webhook_status
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.URL') as webhook_url
+  FROM execution_sequence as es
+)
+,execution_sequence_agg AS (
+  SELECT 
+    session_id
+    ,position
+    ,MAX((SELECT MAX(IF(JSON_QUERY(response,'$.liveAgentHandoff') IS NOT NULL, TRUE, FALSE)) FROM UNNEST(responses) as response)) as live_agent_escalation
+    ,COUNT(*) as execution_sequence_count
+    ,ARRAY_AGG(STRUCT(
+      step
+      ,COALESCE(flow_id_initial_state,flow_id) as flow_id
+      ,COALESCE(flow_display_name_initial_state,flow_display_name) as flow_display_name
+      ,COALESCE(page_id_initial_state,page_id) as page_id
+      ,COALESCE(page_display_name_initial_state,page_display_name) as page_display_name
+      ,COALESCE(status_initial_state,status) as status
+      ,session_parameters_initial
+      ,session_parameters_updated
+      ,system_function_results
+      ,responses
+      ,triggered_transition_route_id
+      ,triggered_intent
+      ,triggered_condition
+      ,target_flow_id
+      ,target_page_id
+    ) ORDER BY step ASC) as execution_sequence
+  FROM execution_sequence_parse
+  GROUP BY 1,2
+)
+,webhook_agg AS (
+  SELECT 
+    session_id
+    ,position
+    ,ARRAY_AGG(STRUCT(
+      step
+      ,flow_id
+      ,flow_display_name
+      ,page_id
+      ,page_display_name
+      ,webhook_id
+      ,webhook_display_name
+      ,webhook_latency_ms
+      ,webhook_status
+      ,webhook_url
+      ,session_parameters_updated
+    ) ORDER BY step ASC) as webhooks
+  FROM execution_sequence_parse
+  WHERE webhook_id is not null
+  GROUP BY 1,2
+)
+,source_and_target_page AS (
+  SELECT 
+    session_id
+    ,position
+    ,execution_sequence[SAFE_OFFSET(0)].flow_id as source_flow_id
+    ,execution_sequence[SAFE_OFFSET(0)].flow_display_name as source_flow_display_name
+    ,execution_sequence[SAFE_OFFSET(0)].page_id as source_page_id
+    ,execution_sequence[SAFE_OFFSET(0)].page_display_name as source_page_display_name
+    ,execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].flow_id
+    ,execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].flow_display_name
+    ,execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_id
+    ,execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_display_name
+  FROM execution_sequence_agg
+)
+,session as (
+  SELECT 
+    session_id
+    ,MIN(request_time) as session_request_time_start
+  FROM base_data
+  GROUP BY 1
+)
+,agent_response AS (
+  SELECT 
+    session_id
+    ,position
+    ,STRING_AGG(JSON_VALUE(response_text,'$'),' ' ORDER BY session_id, position, response_offset,response_text_offset) as agent_response
+  FROM 
+  (
+    SELECT *
+    FROM execution_sequence_parse
+    WHERE ARRAY_LENGTH(responses) > 0
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, position ORDER BY step DESC) = 1
+  ) as a
+  INNER JOIN UNNEST(a.responses) as response with offset as response_offset
+  INNER JOIN UNNEST(JSON_QUERY_ARRAY(response,'$.text.text')) as response_text with offset as response_text_offset
+  GROUP BY 1,2
+)
+,alternative_matched_intents as (
+  SELECT 
+    session_id
+    ,position
+    ,ARRAY_AGG(
+      STRUCT(
+        JSON_VALUE(alternative_matched_intent,'$.DisplayName') as alternative_matched_intent
+        ,SAFE_CAST(JSON_VALUE(alternative_matched_intent,'$.Score') as NUMERIC) as score
+      ) ORDER BY SAFE_CAST(JSON_VALUE(alternative_matched_intent,'$.Score') as NUMERIC) DESC
+    ) as alternative_matched_intents
+  FROM base_data
+    ,UNNEST(alternative_matched_intents) as alternative_matched_intent WITH offset as alternative_matched_intents_offset
+  GROUP BY 1,2
+)
+SELECT 
+  base_data.project_id
+  ,base_data.location
+  ,base_data.agent_id
+  ,base_data.session_id
+  ,session.session_request_time_start
+  ,base_data.response_id
+  ,base_data.request_time
+  ,base_data.position
+  ,base_data.user_utterance
+  ,base_data.optional_dtmf_digits
+  ,agent_response.agent_response
+  ,source_and_target_page.source_flow_id
+  ,source_and_target_page.source_flow_display_name
+  ,source_and_target_page.source_page_id
+  ,source_and_target_page.source_page_display_name
+  ,source_and_target_page.flow_id
+  ,source_and_target_page.flow_display_name
+  ,source_and_target_page.page_id
+  ,source_and_target_page.page_display_name
+  ,base_data.intent_display_id
+  ,base_data.intent_display_name
+  ,base_data.intent_confidence_score
+  ,base_data.match_type
+  ,base_data.event
+  ,base_data.live_agent_handoff
+  ,execution_sequence_agg.live_agent_escalation
+  ,execution_sequence_agg.execution_sequence_count
+  ,base_data.language_code
+  ,base_data.session_parameters
+  ,execution_sequence_agg.execution_sequence
+  ,webhook_agg.webhooks
+  ,alternative_matched_intents.alternative_matched_intents
+FROM base_data
+  LEFT JOIN execution_sequence_agg USING (session_id, position)
+  LEFT JOIN webhook_agg USING (session_id, position)
+  LEFT JOIN source_and_target_page USING (session_id, position)
+  LEFT JOIN session USING (session_id)
+  LEFT JOIN agent_response USING (session_id, position)
+  LEFT JOIN alternative_matched_intents USING (session_id, position)

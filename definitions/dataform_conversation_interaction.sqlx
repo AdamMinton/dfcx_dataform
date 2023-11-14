@@ -1,0 +1,730 @@
+config {
+  type: "incremental",
+  bigquery: {
+    partitionBy: "DATE(session_request_time_start)"
+  },
+  assertions: {
+    uniqueKey: ["session_id", "interaction_position"],
+    nonNull: ["session_id", "interaction_position"]
+  },
+  description: "Interactions for DFCX conversations",
+}
+
+pre_operations {
+  declare request_time_checkpoint default (
+    ${when(incremental(),
+    `select max(session_request_time_start) from ${self()}`,
+    `select timestamp("2000-01-01")`)}
+  );
+}
+
+WITH
+transcript_raw AS (
+  SELECT 
+    DATE(session_request_time_start) as conversation_date
+    ,request_time as timestamp
+    ,session_id
+    ,parameters.att_call_id
+    ,response_id
+    ,session_request_time_start
+    ,position
+    ,event
+    ,match_type
+    ,intent_display_name
+    ,TRIM(source_page_display_name) as source_page
+    ,TRIM(page_display_name) as end_turn_page_display_name
+    ,conv.project_id
+    ,parameters.products_on_id
+    ,parameters.provided_product_line
+    ,JSON_VALUE(session_parameters,'$.AuthenticationMethod') as authentication_method
+    ,CASE 
+      NULLIF(TRIM(JSON_VALUE(session_parameters,'$.head_intent')),'')
+      WHEN '[PERSON_NAME]_file_complaint' THEN 'gen_file_complaint'
+      WHEN 'acct_transfer_[PERSON_NAME]' THEN 'acct_transfer_holder'
+      WHEN 'eq_activate_[PERSON_NAME]' THEN 'eq_activate_sim'
+      WHEN 'eq_order_[PERSON_NAME]' THEN 'eq_order_sim'
+      WHEN 'eq_req_switch_[PERSON_NAME]' THEN 'eq_req_switch_lines'
+      WHEN 'intl_add_[PERSON_NAME]_package' THEN 'intl_add_cruise_package'
+      WHEN 'ts_report_no_[PERSON_NAME]_tone' THEN 'ts_report_no_dial_tone'
+      WHEN 'ts_req_[PERSON_NAME]' THEN 'ts_req_puk'
+      ELSE NULLIF(TRIM(JSON_VALUE(session_parameters,'$.head_intent')),'')
+      END as head_intent
+      ,NULLIF(TRIM(JSON_VALUE(session_parameters,'$.reqAuthentication')),'') as reqAuthentication
+      ,NULLIF(TRIM(JSON_VALUE(session_parameters,'$.isAuthenticated')),'') as isAuthenticated
+      ,NULLIF(TRIM(JSON_VALUE(session_parameters,'$.producttype')),'') as producttype
+      ,NULLIF(TRIM(JSON_VALUE(session_parameters,'$.prev_intent')),'') as prev_intent
+  FROM ${ref("dataform_conversation_metadata_fte")} as conv
+    LEFT JOIN ${ref("dataform_transcript_parameters")} as parameters USING (request_time,session_id,position)
+  WHERE TRUE
+    AND request_time > request_time_checkpoint
+)
+,transcript_processing as (
+  SELECT * EXCEPT(head_intent)
+    ,CASE WHEN project_id like '%chat%' and head_intent = 'req_agent' THEN null
+      ELSE head_intent END as head_intent
+    ,ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY position DESC) as position_reverse
+    ,LEAD(event,1) OVER (PARTITION BY session_id ORDER BY position ASC) as next_event
+    ,LAG(CAST(match_type as string),1) OVER (PARTITION BY session_id ORDER BY position ASC) as previous_match_type
+    ,LAG(intent_display_name,1) OVER (PARTITION BY session_id ORDER BY position ASC) as previous_intent_display_name
+    ,LAST_VALUE(position) OVER (PARTITION BY session_id ORDER BY position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as exit_position
+    ,LEAD(intent_display_name,1) OVER (PARTITION BY session_id ORDER BY position ASC) as next_intent_display_name
+    ,LAG(
+      CASE WHEN project_id like '%chat%' and head_intent = 'req_agent' THEN null
+      ELSE head_intent END
+      ,1) OVER (PARTITION BY session_id ORDER BY position ASC) as previous_head_intent
+  FROM transcript_raw
+)
+,conversation_processing AS (
+  SELECT 
+    session_id
+    ,MIN(session_request_time_start) as session_request_time_start
+    ,MAX(att_call_id) as att_call_id
+    , max(reqAuthentication) as reqAuthentication
+    , max(isAuthenticated) as isAuthenticated
+  FROM transcript_processing
+  GROUP BY 1
+)
+,execution_steps_raw AS (
+  SELECT 
+     DATE(session_request_time_start) as conversation_date
+    ,session_id
+    ,response_id
+    ,es.step
+    ,project_id
+    ,es.flow_display_name
+    ,TRIM(es.page_display_name) as page_display_name
+    ,es.status
+    ,es.triggered_condition
+    ,case when es.page_display_name = 'Live agent handoff' THEN NULL ELSE JSON_VALUE(session_parameters_updated,'$.Event') END as event_updated
+    ,CASE 
+      NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.head_intent')),'')
+      WHEN '[PERSON_NAME]_file_complaint' THEN 'gen_file_complaint'
+      WHEN 'acct_transfer_[PERSON_NAME]' THEN 'acct_transfer_holder'
+      WHEN 'eq_activate_[PERSON_NAME]' THEN 'eq_activate_sim'
+      WHEN 'eq_order_[PERSON_NAME]' THEN 'eq_order_sim'
+      WHEN 'eq_req_switch_[PERSON_NAME]' THEN 'eq_req_switch_lines'
+      WHEN 'intl_add_[PERSON_NAME]_package' THEN 'intl_add_cruise_package'
+      WHEN 'ts_report_no_[PERSON_NAME]_tone' THEN 'ts_report_no_dial_tone'
+      WHEN 'ts_req_[PERSON_NAME]' THEN 'ts_req_puk'
+      ELSE NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.head_intent')),'')
+      END as head_intent_updated
+    ,NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.HowDelivered')),'') as how_delivered
+    ,NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.SMSType')),'') as sms_type
+    ,NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.smsNeedsResponse')),'') as sms_needs_response
+    ,NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.VoiceFaqId')),'') as voice_faq_id
+  FROM ${ref("dataform_conversation_metadata_fte")}
+    ,UNNEST(execution_sequence) as es 
+  WHERE 1=1
+    AND request_time > request_time_checkpoint
+)
+,execution_steps_processing as (
+  SELECT * EXCEPT(head_intent_updated)
+    ,flow_display_name ||'~'||page_display_name as flow_and_page
+    ,ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY step DESC) as step_reverse
+    ,IF(head_intent_updated is not null,TRUE,NULL) as flag_head_intent_changed
+    ,LAST_VALUE(
+      CASE WHEN project_id like '%chat%' and head_intent_updated = 'req_agent' THEN null
+      ELSE head_intent_updated END
+      IGNORE NULLS) 
+      OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS head_intent_updated
+  FROM execution_steps_raw
+)
+,execution_steps_message as (
+  SELECT 
+    session_id
+    ,response_id
+    ,head_intent_updated
+    ,LAST_VALUE(how_delivered IGNORE NULLS)
+      OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING )
+      as how_delivered
+    ,LAST_VALUE(sms_type IGNORE NULLS)
+      OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING )
+      as sms_type
+    ,LAST_VALUE(sms_needs_response IGNORE NULLS)
+      OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING )
+      as sms_needs_response
+    ,LAST_VALUE(flag_head_intent_changed IGNORE NULLS)
+      OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING )
+      as flag_head_intent_changed
+    ,LAST_VALUE(voice_faq_id IGNORE NULLS)
+      OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING )
+      as voice_faq_id
+  FROM execution_steps_processing
+  WHERE TRUE
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY step DESC) = 1
+)
+,execution_steps_event as (
+  SELECT 
+    session_id
+    ,response_id
+    ,flow_display_name
+    ,page_display_name
+    ,LAST_VALUE(event_updated IGNORE NULLS)
+      OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING )
+      as event_updated
+  FROM execution_steps_processing
+  WHERE TRUE
+      AND event_updated IS NOT NULL
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY step DESC) = 1
+)
+,transcript as (
+  SELECT 
+    transcript_processing.session_id
+    ,transcript_processing.att_call_id
+    ,transcript_processing.response_id
+    ,transcript_processing.position
+    ,transcript_processing.position_reverse
+    ,transcript_processing.timestamp
+    ,transcript_processing.event
+    ,transcript_processing.match_type
+    ,transcript_processing.intent_display_name
+    ,transcript_processing.source_page
+    ,transcript_processing.end_turn_page_display_name
+    ,transcript_processing.authentication_method
+    ,transcript_processing.head_intent
+    ,transcript_processing.next_event
+    ,transcript_processing.previous_match_type
+    ,transcript_processing.previous_intent_display_name
+    ,transcript_processing.next_intent_display_name
+    ,transcript_processing.exit_position
+    ,LAST_VALUE(execution_steps_event.flow_display_name IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY timestamp ASC RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW ) as event_flow
+    ,LAST_VALUE(execution_steps_event.page_display_name IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY timestamp ASC RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW ) as event_page
+    ,LAST_VALUE(execution_steps_event.event_updated IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY timestamp ASC RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW ) as event_updated
+    ,execution_steps_message.how_delivered
+    ,execution_steps_message.sms_type
+    ,execution_steps_message.sms_needs_response
+    ,execution_steps_message.voice_faq_id
+    ,transcript_processing.project_id
+    ,transcript_processing.products_on_id
+    ,transcript_processing.provided_product_line
+    ,execution_steps_message.flag_head_intent_changed
+    ,execution_steps_message.head_intent_updated
+    ,transcript_processing.isAuthenticated
+    ,transcript_processing.producttype
+    ,transcript_processing.prev_intent
+  FROM transcript_processing
+    LEFT JOIN execution_steps_message USING (session_id, response_id)
+    LEFT JOIN execution_steps_event USING (session_id, response_id)
+)
+,transcript_full AS (
+  SELECT 
+   transcript.session_id
+  ,conversation_processing.att_call_id
+  ,conversation_processing.session_request_time_start
+  ,transcript.response_id
+  ,transcript.position
+  ,transcript.position_reverse
+  ,transcript.timestamp
+  ,transcript.event
+  ,transcript.match_type
+  ,transcript.intent_display_name
+  ,transcript.source_page
+  ,transcript.end_turn_page_display_name
+  ,case when lower(transcript.project_id) like '%chat%' and conversation_processing.reqAuthentication = 'true' then 'Manual Sign-In'
+  when lower(transcript.project_id) like '%chat%' and conversation_processing.isAuthenticated = 'true' then 'Already Authenticated'
+  when lower(transcript.project_id) like '%chat%' then null
+  else transcript.authentication_method
+  end as authentication_method
+  ,transcript.head_intent
+  ,transcript.next_event
+  ,transcript.previous_match_type
+  ,transcript.previous_intent_display_name
+  ,transcript.next_intent_display_name
+  ,transcript.exit_position
+  ,transcript.event_flow
+  ,transcript.event_page
+  ,transcript.event_updated
+  ,case when lower(transcript.project_id) like '%chat%' then 'CHAT' else 'VOICE' end as channel 
+  ,transcript.how_delivered
+  ,transcript.sms_type
+  ,transcript.sms_needs_response
+  ,transcript.voice_faq_id
+  ,transcript.project_id
+  ,TO_JSON_STRING(transcript.products_on_id) as products_on_id
+  ,TO_JSON_STRING(transcript.provided_product_line) as provided_product_line
+  ,transcript.flag_head_intent_changed
+  ,transcript.head_intent_updated
+  ,MAX(CASE WHEN execution_steps_processing.step = 1 THEN execution_steps_processing.flow_display_name ELSE NULL END ) as source_flow_display_name
+  ,ARRAY_AGG(STRUCT(
+    transcript.position
+    ,execution_steps_processing.step
+    ,execution_steps_processing.step_reverse
+    ,execution_steps_processing.flow_display_name
+    ,execution_steps_processing.page_display_name
+    ,execution_steps_processing.status
+    ,execution_steps_processing.triggered_condition
+    ,execution_steps_processing.flow_and_page
+  )ORDER BY step ASC LIMIT 5000) as execution_steps 
+  ,conversation_processing.isAuthenticated
+  ,conversation_processing.reqAuthentication
+  ,transcript.producttype
+  ,transcript.prev_intent
+  FROM transcript as transcript
+    LEFT JOIN execution_steps_processing USING (session_id, response_id)
+    LEFT JOIN conversation_processing USING (session_id)
+  GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,35,36,37,38
+)
+,interaction_rows as (
+  --
+  --This step checks when the head intent changes and flags the row as which position breaks apart the conversation
+  --
+  SELECT 
+    session_id
+    ,position
+    ,exit_position
+    ,project_id 
+    ,channel
+    , CASE ----- Chat Conversations -------------
+      WHEN project_id in ('att-ccai-chat-prod','att-ccai-chat-staging') THEN 
+          CASE WHEN es.position = 1 THEN TRUE     -- Assumption: Chat conversations would only have 1 turn
+               ELSE NULL 
+          END
+      ELSE
+          ----- Voice Conversations -------------OLD LOGIC
+          -- CASE  WHEN es.position = 1 THEN TRUE --first turn always initiates first interaction
+          --   WHEN next_event = 'Hangup' THEN FALSE --in the next turn when user hangs up don't create a new interaction
+          --   WHEN next_intent_display_name = 'gen_res_hang_up' THEN FALSE --in the next turn the user terminates the session
+          --   WHEN intent_display_name = 'Default Welcome Intent' AND end_turn_page_display_name = 'POC: NextIntent' THEN TRUE
+          --   WHEN end_turn_page_display_name = 'End Session' THEN FALSE --if the conversation terminates to End Session then if
+          --   WHEN source_page = 'POC: NextIntent' AND end_turn_page_display_name <> LAG(end_turn_page_display_name, 1) OVER (PARTITION BY es.session_id ORDER BY es.position ASC) THEN TRUE --POC:NextIntent is typically a flag for the start of a new conversation, conversations that are steering -> make payment (goes to aep) -> steering -> troubleshooting (goes to aep)  -- because they are excluded in the next step by removing all of steering from detected head intent changes --and intent_display_name = 'Default Welcome Intent'
+          --   WHEN source_flow_display_name IN ('Steering','Authentication') THEN FALSE --any disambig in steering will be ignored to avoid extraneous interactions being created, added authentication when the head intent parameter changes during authentication
+          --   WHEN (es.head_intent_filled <> LAG(es.head_intent_filled, 1) OVER (PARTITION BY es.session_id ORDER BY es.position ASC)) THEN TRUE --head_intent changes that occur are an indicator of a new type of interaction is starting
+          --   WHEN lower(source_page) like '%anything%' AND end_turn_page_display_name NOT IN ('End Flow','End Session') AND match_type NOT IN ('NO_MATCH','NO_INPUT') AND intent_display_name NOT IN ('sup_request_repeat_confirmation_number') THEN TRUE --anything else pages at the end of a flow when it re-prompts the user if they want to do something
+          --   ELSE NULL
+          -- END
+          ----- Voice Conversations -------------NEW LOGIC
+          CASE  
+            --first turn always initiates first interaction
+            WHEN es.position = 1 THEN TRUE
+            --looping issue on this page where it toggles head intents in Payments
+            WHEN source_page IN ('Make a Payment Router','Start Page') THEN FALSE
+            --any disambig in steering/authentication will be ignored to avoid extraneous interactions being created except on POC: NextIntent
+            WHEN source_flow_display_name IN ('Steering','Authentication') AND source_page NOT IN ('POC: NextIntent') THEN FALSE
+            --when the head intent changes, initiate a new interaction
+            WHEN flag_head_intent_changed = TRUE THEN TRUE
+            ELSE NULL
+          END
+    END as keep_interaction_head_row
+    ,timestamp
+  FROM transcript_full as es
+)
+,interaction_ranges as (
+  --
+  --This step obtains the range of continuous positions for each part of the converastion (i.e. positions 1 to 3, 4 to 8, etc. )
+  --and numbers each range as unique number
+  --
+  SELECT
+    project_id
+    ,channel
+    ,session_id
+    ,position as start_interaction_position
+    ,COALESCE(LEAD(position) OVER (PARTITION BY session_id ORDER BY position ASC)-1,exit_position) as end_interaction_position
+    ,interaction_position
+    ,interaction_position_reverse
+  FROM (
+  SELECT 
+     project_id
+    ,channel
+    ,session_id
+    ,position
+    ,exit_position
+    ,row_number() OVER (partition by session_id ORDER BY position ASC) as interaction_position
+    ,row_number() OVER (partition by session_id ORDER BY position DESC) as interaction_position_reverse
+  FROM interaction_rows
+  WHERE keep_interaction_head_row = TRUE
+  QUALIFY row_number() OVER (partition by session_id ORDER BY position ASC) < 5
+  )
+)
+,interaction_information as (
+  --
+  --This step re-aggreagetes the execution steps from position/turn based to interaction based with some
+  --additional information from the turn
+  --
+  SELECT 
+    project_id
+    ,channel
+    ,session_id
+    ,att_call_id
+    ,session_request_time_start
+    ,interaction_position
+    ,interaction_position_reverse
+    ,start_interaction_position
+    ,end_interaction_position
+    ,interaction_head_intent
+    ,interaction_provided_product_line
+    ,interaction_products_on_id
+    ,sms_type
+    ,sms_needs_response
+    ,voice_faq_id
+    ,how_delivered
+    ,isAuthenticated
+    ,reqAuthentication
+    ,producttype
+    ,prev_intent
+    ,ARRAY_AGG(
+        STRUCT(position, timestamp, step, flow_display_name, page_display_name, intent_display_name, event, match_type, status, triggered_condition, flow_and_page, position_reverse, step_reverse) ORDER BY position ASC, step ASC
+        LIMIT 5000
+      ) as execution_steps
+    ,MAX(authentication_method) as authentication_method
+    ,MIN(timestamp) as start_interaction_timestamp
+    ,MAX(timestamp) as end_interaction_timestamp
+  FROM (
+    --
+    --This step grabs the last head intent inside of each interaction and associates the turns in a conversation to an interaction 
+    --
+    SELECT 
+      transcript.session_id
+      ,transcript.att_call_id
+      ,session_request_time_start
+      ,interaction_ranges.project_id
+      ,interaction_ranges.channel
+      ,interaction_ranges.interaction_position
+      ,interaction_ranges.interaction_position_reverse
+      ,interaction_ranges.start_interaction_position
+      ,interaction_ranges.end_interaction_position
+      ,LAST_VALUE(COALESCE(transcript.head_intent_updated,transcript.head_intent) IGNORE NULLS) OVER (PARTITION BY transcript.session_id, interaction_ranges.interaction_position ORDER BY transcript.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as interaction_head_intent
+      ,LAST_VALUE(transcript.provided_product_line IGNORE NULLS) OVER (PARTITION BY transcript.session_id, interaction_ranges.interaction_position ORDER BY transcript.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as interaction_provided_product_line
+      ,LAST_VALUE(transcript.products_on_id IGNORE NULLS) OVER (PARTITION BY transcript.session_id, interaction_ranges.interaction_position ORDER BY transcript.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as interaction_products_on_id
+      ,transcript.position
+      ,transcript.position_reverse
+      ,transcript.match_type
+      ,transcript.event
+      ,transcript.intent_display_name
+      ,LAST_VALUE(transcript.authentication_method IGNORE NULLS) OVER (PARTITION BY transcript.session_id, interaction_ranges.interaction_position ORDER BY transcript.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as authentication_method
+      ,transcript.timestamp
+      ,execution_steps.step
+      ,execution_steps.step_reverse
+      ,execution_steps.flow_display_name
+      ,execution_steps.page_display_name
+      ,execution_steps.status
+      ,execution_steps.triggered_condition
+      ,execution_steps.flow_and_page
+      ,LAST_VALUE(transcript.sms_type IGNORE NULLS) OVER (PARTITION BY transcript.session_id, interaction_ranges.interaction_position ORDER BY transcript.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as sms_type
+      ,LAST_VALUE(transcript.sms_needs_response IGNORE NULLS) OVER (PARTITION BY transcript.session_id, interaction_ranges.interaction_position ORDER BY transcript.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as sms_needs_response
+      ,LAST_VALUE(transcript.voice_faq_id IGNORE NULLS) OVER (PARTITION BY transcript.session_id, interaction_ranges.interaction_position ORDER BY transcript.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as voice_faq_id
+      ,LAST_VALUE(transcript.how_delivered IGNORE NULLS) OVER (PARTITION BY transcript.session_id, interaction_ranges.interaction_position ORDER BY transcript.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as how_delivered
+      --,LAST_VALUE(transcript.isAuthenticated IGNORE NULLS) OVER (PARTITION BY transcript.session_id, interaction_ranges.interaction_position ORDER BY transcript.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as isAuthenticated
+      ,LAST_VALUE(transcript.producttype IGNORE NULLS) OVER (PARTITION BY transcript.session_id, interaction_ranges.interaction_position ORDER BY transcript.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as producttype
+      ,LAST_VALUE(transcript.prev_intent IGNORE NULLS) OVER (PARTITION BY transcript.session_id, interaction_ranges.interaction_position ORDER BY transcript.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as prev_intent
+      ,transcript.reqAuthentication
+      ,transcript.isauthenticated
+      FROM transcript_full as transcript
+      INNER JOIN UNNEST(transcript.execution_steps) as execution_steps
+      INNER JOIN interaction_ranges 
+        ON transcript.session_id = interaction_ranges.session_id
+          AND transcript.position BETWEEN interaction_ranges.start_interaction_position AND interaction_ranges.end_interaction_position
+  )
+  GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20
+)
+-- Logic for CHAT
+-- , chat_actions_to_check as 
+-- (
+-- select interaction_head_intent as head_intent,
+--     'Authentication' as primary_flow
+--     ,'NA' as start_flow
+--     ,'NA' as start_page
+--     ,'NA' as end_flow
+--     ,'NA' as end_page
+--     ,'AUTHENTICATION' as action
+--     ,'BEHAVIOUR' as action_type
+--     ,'SUCCESS' as outcome
+--     ,False as primary_action
+--     ,channel
+--     ,parse_date('%Y-%m-%d','2020-01-01') as valid_from
+--     ,parse_date('%Y-%m-%d','2050-01-01') as valid_to
+-- from interaction_information
+-- where channel = 'CHAT'
+-- group by 1,2,3,4,5,6,7,8,9,10,11,12,13
+-- )
+,actions_to_check as (
+  ##
+  ##This step takes the external tables and joins them together for checking every conversation
+  ##
+  SELECT DISTINCT
+    head_intent
+    ,primary_flow
+    ,start_flow
+    ,start_page
+    ,end_flow
+    ,end_page
+    ,action
+    ,action_type
+    ,outcome
+    ,primary_action
+    ,channel
+    ,valid_from
+    ,valid_to
+  FROM dfcx.intent_specific_actions
+  WHERE start_page is not null and end_page is not null
+  UNION ALL
+  SELECT  
+    interaction_head_intent as head_intent
+    ,primary_flow
+    ,start_flow
+    ,start_page
+    ,end_flow
+    ,end_page
+    ,action
+    ,action_type
+    ,outcome 
+    ,primary_action
+    ,b.channel
+    ,valid_from
+    ,valid_to
+  FROM (SELECT DISTINCT interaction_head_intent, channel FROM interaction_information) as a
+    CROSS JOIN dfcx.intent_agnostic_actions b where a.channel = b.channel
+  --  UNION ALL
+  -- SELECT * 
+  -- FROM chat_actions_to_check
+)
+,unnest_execution_steps as (
+  SELECT 
+  int.session_id
+  ,int.att_call_id
+  ,int.session_request_time_start
+  ,int.interaction_position
+  ,int.interaction_position_reverse
+  ,int.interaction_head_intent
+  ,int.authentication_method
+  ,int.start_interaction_position
+  ,int.start_interaction_timestamp
+  ,int.end_interaction_position
+  ,int.end_interaction_timestamp
+  ,int.how_delivered
+  ,int.sms_type
+  ,int.sms_needs_response
+  ,int.voice_faq_id
+  ,es.flow_and_page
+  ,es.position
+  ,es.timestamp
+  ,int.channel
+  ,int.project_id
+  ,int.interaction_provided_product_line
+  ,int.interaction_products_on_id
+  ,int.isAuthenticated
+  ,int.reqAuthentication
+  ,int.producttype
+  ,int.prev_intent
+  FROM interaction_information as int
+    LEFT JOIN UNNEST(execution_steps) as es 
+)
+,checking_self_service as (
+  ##
+  ##This step checks within each interaction for a head intent did it start 
+  ##and successfully complete the desired self-service action
+  ##
+  SELECT 
+     int.project_id
+    ,int.session_id
+    ,int.session_request_time_start
+    ,int.interaction_position
+    ,int.interaction_position_reverse
+    ,int.interaction_head_intent
+    ,int.interaction_provided_product_line
+    ,int.interaction_products_on_id
+    ,int.authentication_method
+    ,actions.action
+    ,actions.action_type
+    ,actions.outcome
+    ,int.start_interaction_position
+    ,int.start_interaction_timestamp
+    ,int.end_interaction_position
+    ,int.end_interaction_timestamp
+    ,actions.primary_action
+    ,actions.primary_flow
+    ,int.sms_type
+    ,int.sms_needs_response
+    ,int.how_delivered
+    ,int.voice_faq_id
+    ,int.isAuthenticated
+    ,int.producttype
+    ,int.prev_intent
+    ,MAX(CASE WHEN actions.channel = 'CHAT' AND actions.action = 'AUTHENTICATION' THEN case when int.reqAuthentication = 'true' or int.isAuthenticated = 'true' then True else False end
+            ELSE CASE WHEN actions.start_flow || '~' || actions.start_page = int.flow_and_page THEN TRUE ELSE FALSE END 
+          END) as action_started --stays max for detecting of boolean
+    ,MIN(CASE WHEN actions.start_flow || '~' || actions.start_page = int.flow_and_page THEN int.position ELSE NULL END) as action_started_position --min to capture when the first position with page happens
+    ,MIN(CASE WHEN actions.start_flow || '~' || actions.start_page = int.flow_and_page THEN int.timestamp ELSE NULL END) as action_started_timestamp --min to capture when the first timestamp
+    ,MAX(CASE WHEN actions.channel = 'CHAT' AND actions.action = 'AUTHENTICATION' THEN case when int.isAuthenticated = 'true' then True else False end
+          ELSE CASE WHEN actions.end_flow || '~' || actions.end_page = int.flow_and_page THEN TRUE ELSE FALSE END
+        END) as action_ended --stays max for detecting of boolean
+    ,MAX(CASE WHEN actions.end_flow || '~' || actions.end_page = int.flow_and_page THEN int.position ELSE NULL END) as action_ended_position --max to capture the last position with page
+    ,MAX(CASE WHEN actions.end_flow || '~' || actions.end_page = int.flow_and_page THEN int.timestamp ELSE NULL END) as action_ended_timestamp --max to capture the last timestamp with page
+  FROM unnest_execution_steps as int
+    LEFT JOIN actions_to_check as actions
+      ON COALESCE(int.interaction_head_intent,'~NULL~') = COALESCE(actions.head_intent,'~NULL~')
+      AND int.channel = actions.channel
+      AND DATE(int.start_interaction_timestamp) BETWEEN valid_from AND valid_to
+  GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25
+)
+,last_message_disposition as (
+  ##
+  ##This step obtains the ending information from the transcripts to determine what happened
+  ##
+  SELECT 
+     ss.session_id
+    ,ss.interaction_position
+    ,t.source_flow_display_name
+    ,t.source_page as source_page_display_name 
+    ,t.execution_steps[SAFE_ORDINAL(IF(ARRAY_LENGTH(t.execution_steps)=1,1,ARRAY_LENGTH(t.execution_steps)-1))].flow_display_name as flow_display_name
+    ,t.execution_steps[SAFE_ORDINAL(IF(ARRAY_LENGTH(t.execution_steps)=1,1,ARRAY_LENGTH(t.execution_steps)-1))].page_display_name as page_display_name
+    ,t.intent_display_name
+    ,t.event_updated as event
+    ,t.event_page as event_page
+    ,t.event_flow as event_flow
+    ,t.match_type
+    ,ss.authentication_method
+    ,ss.sms_type
+    ,ss.sms_needs_response
+    ,ss.how_delivered
+    ,ss.voice_faq_id
+    ,ss.isAuthenticated
+    ,ss.producttype
+    ,ss.prev_intent
+  FROM checking_self_service as ss
+    INNER JOIN transcript_full as t
+    ON ss.session_id = t.session_id
+    AND ss.end_interaction_position = t.position
+  GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
+)
+,composing_table as (
+  ## 
+  ##This step obtains on the last turn in the interaction, the second to last execution step for pulling flow name/page name. Event/Intent Display name 
+  ##are from the end of the turn.
+  ##
+SELECT 
+   DATE(checking_self_service.session_request_time_start) as _PARTITION_DATE
+  ,checking_self_service.project_id
+  ,checking_self_service.session_id
+  ,checking_self_service.session_request_time_start
+  ,checking_self_service.interaction_position
+  ,checking_self_service.interaction_position_reverse
+  ,checking_self_service.interaction_head_intent
+  ,checking_self_service.interaction_provided_product_line
+  ,checking_self_service.interaction_products_on_id
+  ,checking_self_service.start_interaction_position
+  ,checking_self_service.end_interaction_position
+  ,interaction_information.execution_steps
+  ,STRUCT(
+     CASE WHEN checking_self_service.primary_flow = 'AskAndi' AND checking_self_service.voice_faq_id IS NOT NULL AND checking_self_service.action_started THEN checking_self_service.voice_faq_id ELSE checking_self_service.action END as action
+    ,checking_self_service.action_type
+    ,checking_self_service.primary_action
+    ,checking_self_service.action_started
+    ,checking_self_service.action_started_position
+    ,CASE WHEN checking_self_service.action_started = TRUE THEN checking_self_service.action_ended ELSE FALSE END as action_ended
+    ,checking_self_service.action_ended_position
+    ,checking_self_service.primary_flow
+   ) as actions
+  ,STRUCT(
+    last_message.event
+    ,last_message.event_page
+    ,last_message.event_flow
+    ,last_message.match_type
+    ,last_message.source_page_display_name
+    ,last_message.source_flow_display_name
+    ,last_message.flow_display_name
+    ,last_message.page_display_name
+    ,last_message.intent_display_name
+    ,last_message.authentication_method
+    ,last_message.how_delivered
+    ,last_message.sms_type
+    ,last_message.sms_needs_response
+    ,last_message.voice_faq_id
+    ,last_message.isAuthenticated
+    ,last_message.producttype
+    ,last_message.prev_intent
+   ) as final_message
+FROM checking_self_service
+  LEFT JOIN interaction_information USING (session_id,interaction_position)
+  LEFT JOIN last_message_disposition as last_message
+    ON checking_self_service.session_id = last_message.session_id
+    AND checking_self_service.interaction_position = last_message.interaction_position
+)
+,consolidated_actions as (
+  SELECT 
+    project_id
+    ,session_id
+    ,session_request_time_start
+    ,interaction_position
+    ,interaction_position_reverse
+    ,interaction_head_intent
+    ,interaction_provided_product_line
+    ,interaction_products_on_id
+    ,start_interaction_position
+    ,end_interaction_position
+    ,TO_JSON_STRING(execution_steps) as execution_steps
+    ,TO_JSON_STRING(final_message) as final_message
+    ,ARRAY_AGG(actions LIMIT 5000) as actions
+    ,CURRENT_TIMESTAMP as insert_timestamp
+  FROM composing_table
+  GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12
+)
+,interaction_provided_product_line as (
+  SELECT 
+    session_id
+    ,interaction_position
+    ,interaction_products_on_id
+    ,ARRAY_AGG( 
+      CASE 
+        WHEN interaction_provided_product_line = 'phone' AND 'wireless' IN UNNEST(JSON_EXTRACT_ARRAY(interaction_products_on_id)) THEN 'wireless'
+        WHEN interaction_provided_product_line = 'internet' AND 'hsia' IN UNNEST(JSON_EXTRACT_ARRAY(interaction_products_on_id)) THEN 'hsia'
+        WHEN interaction_provided_product_line = 'tv' AND 'iptv' IN UNNEST(JSON_EXTRACT_ARRAY(interaction_products_on_id)) THEN 'iptv'
+        WHEN interaction_provided_product_line = 'wireless internet' AND 'wireless' IN UNNEST(JSON_EXTRACT_ARRAY(interaction_products_on_id)) THEN 'wireless'
+        ELSE interaction_provided_product_line
+      END
+    IGNORE NULLS ORDER BY provided_product_line_offset LIMIT 5000) as provided_product_line_cleaned
+  FROM consolidated_actions
+    LEFT JOIN UNNEST(JSON_EXTRACT_ARRAY(interaction_provided_product_line)) as interaction_provided_product_line WITH OFFSET as provided_product_line_offset
+  GROUP BY 1,2,3
+)
+,consolidated_data as (
+  SELECT 
+    session_id
+    ,interaction_position
+    ,CASE 
+      WHEN provided_product_line_cleaned IS NULL THEN JSON_EXTRACT_ARRAY(interaction_products_on_id)
+      WHEN interaction_products_on_id IS NULL THEN provided_product_line_cleaned
+      WHEN provided_product_line_cleaned[offset(0)] = 'all' and interaction_products_on_id IS NOT NULL THEN JSON_EXTRACT_ARRAY(interaction_products_on_id)
+      WHEN provided_product_line_cleaned[offset(0)] IN UNNEST(JSON_EXTRACT_ARRAY(interaction_products_on_id)) THEN provided_product_line_cleaned
+      WHEN ARRAY_LENGTH(JSON_EXTRACT_ARRAY(interaction_products_on_id)) > 1 THEN provided_product_line_cleaned 
+      ELSE JSON_EXTRACT_ARRAY(interaction_products_on_id)
+    END as interaction_consolidated_product
+  FROM interaction_provided_product_line
+)
+SELECT 
+   project_id
+  ,session_id
+  ,session_request_time_start
+  ,interaction_position
+  ,interaction_position_reverse
+  ,interaction_head_intent
+  ,interaction_provided_product_line
+  ,interaction_products_on_id
+  ,start_interaction_position
+  ,end_interaction_position
+  ,JSON_EXTRACT_ARRAY(execution_steps) as execution_steps
+  -- ,PARSE_JSON(final_message) as final_message
+  ,STRUCT(
+    JSON_VALUE(PARSE_JSON(final_message),'$.event') as event
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.event_page') as event_page
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.event_flow') as event_flow
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.match_type') as match_type
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.source_page_display_name') as source_page_display_name
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.source_flow_display_name') as source_flow_display_name
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.flow_display_name') as flow_display_name
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.page_display_name') as page_display_name
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.intent_display_name') as intent_display_name
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.authentication_method') as authentication_method
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.how_delivered') as how_delivered
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.sms_type') as sms_type
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.sms_needs_response') as sms_needs_response
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.voice_faq_id') as voice_faq_id
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.isAuthenticated') as isAuthenticated
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.producttype') as producttype
+    ,JSON_VALUE(PARSE_JSON(final_message),'$.prev_intent') as prev_intent
+   ) as final_message
+  ,actions
+  ,CURRENT_TIMESTAMP as insert_timestamp
+  ,interaction_consolidated_product
+FROM consolidated_actions
+  LEFT JOIN consolidated_data USING (session_id, interaction_position)
+

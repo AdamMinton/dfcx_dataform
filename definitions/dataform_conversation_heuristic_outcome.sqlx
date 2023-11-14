@@ -1,0 +1,202 @@
+config {
+  type: "table",
+  assertions: {
+    uniqueKey: ["session_id"],
+    nonNull: ["session_id"]
+  },
+  description: "DFCX session heuristic outcome",
+}
+
+
+WITH 
+conversations as (
+  SELECT
+    conversation.session_id
+    ,conversation.position
+    ,conversation.session_request_time_start
+    ,JSON_VALUE(session_parameters,'$.goal') as goal
+    ,conversation.event
+    ,conversation.intent_display_name
+    ,conversation.agent_response
+    ,conversation.source_page_display_name
+    ,conversation_info.final_interaction_head_intent
+    ,conversation.execution_sequence
+  FROM ${ref("dataform_conversation_metadata_fte")} as conversation
+    INNER JOIN ${ref("dataform_conversation")} as conversation_info USING (session_id)
+  WHERE 1=1
+)
+,response_message as (
+  SELECT 
+    conversations.session_id
+    ,position
+    ,JSON_VALUE(response,'$.payload.returndata_to_ivrcs.DialogFlowIntent') as dialog_flow_intent
+    ,JSON_VALUE(response,'$.payload.returndata_to_ivrcs.ReasonForReturn') as reason_for_return
+    ,JSON_VALUE(response,'$.payload.returndata_to_ivrcs.Outcome') as outcome
+    ,JSON_VALUE(response,'$.payload.returndata_to_ivrcs.ProvidedProductLine') as provided_product_line
+    ,CASE 
+      WHEN JSON_VALUE(response,'$.payload.returndata_to_ivrcs.ReasonForReturn') IN ('RequestAgent','AgentRequested','MaxIntentCollection','GoalNotSatisfied','MaxIdCollection','ForceToAgent','WebhookErrorIntentCollection','WebhookErrorIdCollection','UpFrontWebhookFailure','WebhookError','WebhookErrorProductDetermination','ResetTlgPasscode','WebhookTimeout','GhostCaller','MaxBillDetermination','MaxProductDetermination','NoInputMax','NoMatchMax','OnlineOrderGroup','WebhookErrorBillDetermination') 
+      THEN TRUE 
+      ELSE FALSE 
+    END as escalation_indicator
+    ,ROW_NUMBER() OVER (PARTITION BY conversations.session_id, conversations.position ORDER BY response_offset DESC ) as response_position_reverse
+  FROM conversations
+  LEFT JOIN UNNEST(execution_sequence) as execution_step
+  LEFT JOIN UNNEST(responses) as response with offset as response_offset
+  -- ais_ccai_eng.att_response_messages as response
+  WHERE 1=1
+)
+,last_turn as (
+  SELECT 
+    session_id
+    ,MAX(final_interaction_head_intent) as final_interaction_head_intent
+    ,MAX(position) as end_position
+    ,MAX(session_request_time_start) as conversation_start_date
+  FROM conversations
+  GROUP BY 1
+)
+,first_req_agent_turn as (
+  SELECT session_id, MIN(position) as first_position_req_agent
+  FROM conversations
+  WHERE intent_display_name like '%req_agent%'
+  GROUP BY 1
+)
+,execution_steps as (
+  SELECT 
+    session_id
+    ,position
+    ,MAX(CASE WHEN triggered_condition like '%goal = LiveAgent%' THEN TRUE ELSE FALSE END) as escalate_to_live_agent
+    ,MAX(CASE WHEN triggered_condition like '%goal = DetermineNextRoute%' THEN TRUE ELSE FALSE END) as determine_next_route
+    ,MAX(CASE WHEN triggered_condition = '$session.params.taskList[0] = null' THEN TRUE ELSE FALSE END) as task_list_null
+  FROM
+    ( SELECT *
+      FROM conversations
+        LEFT JOIN UNNEST(execution_sequence) as execution_step
+    )
+  GROUP BY 1,2
+)
+, came_from_aep_check as (
+  SELECT 
+    session_id
+    , ARRAY_AGG(distinct flow_id) as unique_flows
+  FROM 
+  (
+    SELECT *, ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY position DESC, starting_step DESC) as row_number_reverse
+    FROM 
+    (
+      SELECT session_id, position, flow_id as flow_id, MIN(step) as starting_step
+      FROM (
+        SELECT session_id, position, execution_step.step, execution_step.flow_id
+        FROM conversations
+          LEFT JOIN UNNEST(execution_sequence) as execution_step
+      )
+      WHERE position > 2 --avoid checking the first row
+      GROUP BY 1,2,3
+    )
+  )
+  WHERE row_number_reverse <= 5
+  GROUP BY 1
+)
+,consolidated_data as (
+SELECT 
+  last_turn.session_id
+  ,last_turn.final_interaction_head_intent
+  ,conversations.position
+  ,conversations.event
+  ,conversations.goal
+  ,response_message.reason_for_return
+  ,response_message.escalation_indicator
+  ,conversations.intent_display_name as last_intent_display_name
+  ,conversations.agent_response as last_agent_response
+  ,execution_steps.escalate_to_live_agent
+  ,execution_steps.determine_next_route
+  ,execution_steps.task_list_null
+  ,case when first_req_agent_turn.first_position_req_agent <= conversations.position THEN first_req_agent_turn.first_position_req_agent ELSE NULL END as first_position_req_agent
+  ,case when '00000000-0000-0000-0000-000000000000' IN UNNEST(unique_flows) THEN TRUE ELSE FALSE END as came_from_aep
+  ,conversations.source_page_display_name as last_source_page
+  ,IF(last_turn.conversation_start_date >= '2023-06-08' AND last_turn.final_interaction_head_intent like 'bill_%',TRUE,FALSE) as billing_intent_exception_for_last_agent_response
+FROM last_turn
+  LEFT JOIN conversations 
+    ON last_turn.session_id = conversations.session_id
+    AND last_turn.end_position = conversations.position
+  LEFT JOIN response_message
+    ON conversations.session_id = response_message.session_id
+    AND conversations.position = response_message.position 
+    AND response_position_reverse = 1
+  LEFT JOIN execution_steps
+    ON conversations.session_id = execution_steps.session_id
+    AND conversations.position = execution_steps.position 
+  LEFT JOIN first_req_agent_turn
+    ON conversations.session_id = first_req_agent_turn.session_id
+  LEFT JOIN came_from_aep_check
+    ON conversations.session_id = came_from_aep_check.session_id
+)
+,final_tagging as (
+SELECT 
+  session_id
+  ,position
+  ,CASE WHEN event = 'Hangup' THEN TRUE ELSE FALSE END as hangup
+  ,CASE WHEN goal = 'DetermineNextRoute' OR determine_next_route = TRUE THEN TRUE ELSE FALSE END as routed_away_during_last_turn
+  ,CASE WHEN goal = 'LiveAgent' OR escalate_to_live_agent = TRUE THEN TRUE ELSE FALSE END as escalated_during_last_turn
+  ,escalation_indicator as escalation_indicator_during_last_turn
+  ,CASE WHEN last_intent_display_name = 'req_spanish' THEN TRUE ELSE FALSE END as requested_spanish
+  ,CASE WHEN last_intent_display_name = 'user_goodbye' THEN TRUE ELSE FALSE END as user_goodbye
+  ,CASE WHEN lower(last_agent_response) like '%was unable to hear anything%' THEN TRUE ELSE FALSE END as unable_to_hear
+  ,CASE WHEN IF(billing_intent_exception_for_last_agent_response = TRUE,FALSE,COALESCE(REGEXP_CONTAINS(lower(last_agent_response),r'agent|someone'),FALSE)) OR (last_intent_display_name = 'confirmation.yes' AND last_source_page = '> agent confirmation') THEN TRUE ELSE FALSE END as agent_response_escalation
+  ,task_list_null
+  ,first_position_req_agent
+  ,came_from_aep
+FROM consolidated_data
+)
+, final_data as (
+SELECT 
+  *
+  ,CASE
+      WHEN requested_spanish THEN 'SUCCEEDED'
+      WHEN (hangup OR user_goodbye) AND came_from_aep THEN 'SUCCEEDED'
+      WHEN hangup OR unable_to_hear THEN 'ABANDONED' 
+      WHEN escalated_during_last_turn OR escalation_indicator_during_last_turn OR agent_response_escalation THEN 'ESCALATED'
+      WHEN routed_away_during_last_turn THEN 'SUCCEEDED'
+      WHEN task_list_null THEN 'SUCCEEDED'
+    ELSE 'SUCCEEDED' END as heuristic_outcome
+  ,CASE
+    WHEN requested_spanish THEN FALSE
+    WHEN (hangup OR user_goodbye) AND came_from_aep THEN TRUE
+    WHEN hangup OR unable_to_hear THEN TRUE
+    WHEN escalated_during_last_turn OR escalation_indicator_during_last_turn OR agent_response_escalation THEN TRUE
+    WHEN routed_away_during_last_turn THEN FALSE
+    WHEN task_list_null THEN FALSE
+  ELSE TRUE END as can_heuristic_outcome_be_determined
+  ,CASE
+    WHEN requested_spanish THEN 'SPANISH'
+    WHEN (hangup OR user_goodbye) AND came_from_aep THEN 'AEP'
+    WHEN hangup OR unable_to_hear THEN 'GVA' 
+    WHEN escalated_during_last_turn OR escalation_indicator_during_last_turn OR agent_response_escalation THEN 'GVA'
+    WHEN routed_away_during_last_turn THEN 'AEP'
+    WHEN task_list_null THEN 'AEP'
+  ELSE 'GVA' END as handled_by
+  ,CASE
+    WHEN requested_spanish THEN 'user requested spanish'
+    WHEN (hangup or user_goodbye) AND came_from_aep THEN 'user finished AEP self-service and hangs up'
+    WHEN hangup THEN 'user hangs up'
+    WHEN unable_to_hear THEN 'bot is unable to hear user'
+    WHEN escalated_during_last_turn THEN 'goal set to LiveAgent'
+    WHEN escalation_indicator_during_last_turn THEN 'response reason contained escalation'
+    WHEN agent_response_escalation THEN 'last agent response indicated routing to an agent'
+    WHEN routed_away_during_last_turn THEN 'user sent to AEP self-service by DetermineNextRoute'
+    WHEN task_list_null THEN 'user sent to AEP self-service by task list is blank'
+  ELSE 'default' END as rule_applied
+  ,CASE
+    WHEN requested_spanish THEN 1
+    WHEN (hangup or user_goodbye) AND came_from_aep THEN 2
+    WHEN hangup THEN 3
+    WHEN unable_to_hear THEN 4
+    WHEN escalated_during_last_turn THEN 5
+    WHEN escalation_indicator_during_last_turn THEN 6
+    WHEN agent_response_escalation THEN 7
+    WHEN routed_away_during_last_turn THEN 8
+    WHEN task_list_null THEN 9
+  ELSE 10 END as rule_applied_order
+FROM final_tagging
+)
+SELECT *
+FROM final_data

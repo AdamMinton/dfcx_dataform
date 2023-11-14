@@ -1,0 +1,41 @@
+config {
+  type: "view",
+    assertions: {
+    uniqueKey: ["session_id", "position"],
+    nonNull: ["session_id", "position"]
+  },
+  description: "Session Parameters of DFCX conversations",
+}
+
+SELECT 
+   session_id
+  ,position
+  ,request_time
+  ,JSON_VALUE(session_parameters,'$.AAMIntentFromGDF') as aam_intent_from_gdf
+  ,JSON_VALUE(session_parameters,'$.status') as status
+  ,JSON_VALUE(session_parameters,'$.head_intent') as head_intent
+  ,JSON_VALUE(session_parameters,'$.VerintID') as verint_id
+  ,JSON_VALUE(session_parameters,'$.ProvidedIDMatchedToBill') as provided_id_matched_to_bill
+  ,JSON_VALUE(session_parameters,'$.providedIntent') as provided_intent
+  ,JSON_VALUE(session_parameters,'$.providedid') as provided_id
+  ,JSON_VALUE(session_parameters,'$.BC_version') as bc_version
+  ,JSON_VALUE(session_parameters,'$.pendingadjustment') as pending_adjustment
+  ,COALESCE(
+    JSON_VALUE(session_parameters,'$.avaya-session-telephone.ContextID') 
+    ,JSON_VALUE(session_parameters,'$.conversationId')
+    ) as att_call_id
+  ,JSON_VALUE(session_parameters,'$.avaya-session-telephone.dnis') as att_call_dnis
+  ,JSON_VALUE(session_parameters,'$.avaya-session-telephone.handoffTarget') as att_call_handoff_target
+  ,JSON_VALUE_ARRAY(session_parameters,'$.providedproductline') as provided_product_line
+  ,JSON_VALUE_ARRAY(session_parameters,'$.productsOnID.value') as products_on_id
+  ,JSON_VALUE_ARRAY(session_parameters,'$.BillsOnID.value') as bills_on_id
+  ,JSON_VALUE(session_parameters,'$.input_from_ivrcs.DNISCategory') as dnis_category
+  ,JSON_VALUE(session_parameters,'$.input_from_ivrcs.ANI') as ani
+  ,COALESCE(
+      JSON_VALUE(session_parameters,'$.AdjustmentList') 
+      ,JSON_VALUE(session_parameters,'$.adjustmentlist')
+      ) as adjustment_list
+  ,JSON_VALUE_ARRAY(session_parameters,'$.pendingadjustmentdescription') as pending_adjustment_description
+  ,JSON_VALUE_ARRAY(session_parameters,'$.PendingCreditAdjustmentDescriptionForVoice') as pending_adjustment_description_for_voice
+FROM ${ref("dataform_conversation_metadata_fte")}
+WHERE TRUE

@@ -1,0 +1,36 @@
+config {
+
+  type: "incremental",
+  bigquery: {
+    partitionBy: "DATE(request_time)"
+  },
+  assertions: {
+    uniqueKey: ["session_id", "position"],
+    nonNull: ["session_id", "position"]
+  },
+  description: "Contains the last response messsage for each session-position",
+}
+
+pre_operations {
+  declare request_time_checkpoint default (
+    ${when(incremental(),
+    `select max(request_time) from ${self()}`,
+    `select timestamp("2000-01-01")`)}
+  );
+}
+
+SELECT 
+  session_id
+  ,position
+  ,request_time
+  ,ARRAY_REVERSE(responses)[0] as last_response
+FROM 
+(
+  SELECT *
+  FROM ${ref("dataform_conversation_metadata_fte")}
+    ,UNNEST(execution_sequence) as execution_step
+  WHERE TRUE
+    AND ARRAY_LENGTH(responses) > 0
+    AND request_time > request_time_checkpoint
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, position ORDER BY step DESC) = 1
+) as a

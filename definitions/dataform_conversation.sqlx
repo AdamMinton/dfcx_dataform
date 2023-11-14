@@ -1,7 +1,7 @@
 config {
   type: "table",
   bigquery: {
-    partitionBy: "DATE(session_request_date_start)"
+    partitionBy: "DATE(session_request_time_start)"
   },
   assertions: {
     uniqueKey: ["session_id"],
@@ -13,8 +13,7 @@ config {
 with 
 log_info as (
   SELECT 
-    DATE(conversation.session_request_time_start) as session_request_date_start
-    ,conversation.session_id
+     conversation.session_id
     ,conversation.project_id
     ,MAX(parameters.att_call_id) as att_call_id
     ,MIN(session_request_time_start) as session_request_time_start
@@ -32,7 +31,7 @@ log_info as (
     INNER JOIN ${ref("dataform_transcript_parameters")} as parameters
       USING (session_id,position,request_time)
   WHERE TRUE
-  GROUP BY 1,2,3
+  GROUP BY 1,2
 )
 ,language_code AS (
   SELECT session_id, IF(last_intent_display_name = 'req_spanish','es-us',final_language_code) as final_language_code
@@ -159,8 +158,7 @@ log_info as (
   WHERE ranking = 1
 )
 SELECT 
-  log_info.session_request_date_start
-  ,log_info.session_id
+  log_info.session_id
   ,log_info.project_id
   ,log_info.att_call_id
   ,log_info.verint_id

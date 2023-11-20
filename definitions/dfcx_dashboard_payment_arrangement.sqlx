@@ -1,0 +1,136 @@
+config {
+  type: "table",
+  bigquery: {
+    partitionBy: "DATE(session_start_time)"
+  },
+  description: "Payment - PAYMENT_ARRANGEMENT Disposition",
+}
+
+pre_operations {
+
+----------------------------------------------------------------
+-- Functions --
+----------------
+-- BreakDown 1 --
+CREATE TEMP  FUNCTION GetBreakDown_L1(status STRING, last_event STRING, last_goal STRING, flow_name STRING, last_page STRING, determine_next_route_flag BOOL)
+RETURNS STRING
+AS (
+    case  when status = 'SUCCEEDED' and last_event = 'Success' then 'Successfully Finishing Self-Service'
+          when status = 'SUCCEEDED' and (lower(last_event) = 'hangup' or lower(last_event) like '%agent%') then 'Successfully Finishing SS HangUp/Agent'
+          when status = 'NO ATTEMPT' and (determine_next_route_flag is true or last_goal = 'DetermineNextRoute' or last_event = 'DetermineNextRoute')
+                and flow_name = 'Payment Arrangement' then 'Not Starting Self-Service'
+          when status = 'NO ATTEMPT' and (determine_next_route_flag is true or last_goal = 'DetermineNextRoute' or last_event = 'DetermineNextRoute')
+                and flow_name != 'Payment Arrangement' then 'Not Starting Flow'
+          when status = 'NO ATTEMPT' and ifnull(last_goal, 'null') = 'null' and (ifnull(last_event, 'null') = 'null' or last_event = 'HangUp')
+                and flow_name = 'Steering' and last_page = 'POC: NextIntent' then 'Not Starting Flow'
+          when status = 'FAILED' and (lower(last_event) = 'hangup' or lower(last_event) like '%agent%') then 'Not Finishing Self-Service (HangUp/Agent)'
+     else concat(initcap(status), ' (Others)') end
+);
+
+
+-- BreakDown 2 --
+CREATE TEMP FUNCTION GetBreakDown_L2(status STRING, last_event STRING, last_goal STRING, flow_name STRING, last_page STRING, determine_next_route_flag BOOL)
+RETURNS STRING
+AS (
+    case  when status = 'SUCCEEDED' and last_event = 'Success' then 'Successfully Finishing Self-Service'
+          when status = 'SUCCEEDED' and lower(last_event) = 'hangup' then 'HangUp'
+          when status = 'SUCCEEDED' and lower(last_event) like '%agent%' then 'Agent'
+        
+          when status = 'NO ATTEMPT' and (determine_next_route_flag is true or last_goal = 'DetermineNextRoute' or last_event = 'DetermineNextRoute') then 'Screening Out'
+          --when status = 'NO ATTEMPT' and  credit_zero_balance_flag then 'Credit or Zero Balance'
+          when status = 'NO ATTEMPT' and ifnull(last_goal, 'null') = 'null' and (ifnull(last_event, 'null') = 'null' or last_event = 'HangUp')
+                and flow_name = 'Steering' and last_page = 'POC: NextIntent' then 'Screening Out'
+          -- new --
+          when status = 'NO ATTEMPT' and last_page in('Schedule Payment Eligible', 'Instant Payment')  then 'Payment already exists'
+          when status = 'NO ATTEMPT' and last_page = 'schedule payment not eligible' then 'Not Eligible for PA'
+          when status = 'NO ATTEMPT' and last_page = 'Confirm Immediate Payment' then 'Minimum payment required'
+          -- new --
+          
+          when status = 'FAILED' and lower(last_event) = 'hangup'  then 'HangUp'
+          when status = 'FAILED' and lower(last_event) like '%agent%' then 'Agent'
+          -- new --
+          when status = 'FAILED' and last_event = 'NoInputMax' then 'NoInputMax'
+          when status = 'FAILED' and last_event = 'NoMatchMax' then 'NoMatchMax'
+          -- new --
+
+    else concat(initcap(status), ' (Others)') end
+          
+);
+
+}
+
+
+with base_interactions as
+(
+SELECT
+        interactions.session_id,
+        interactions.session_start_time,
+        interactions.interaction_position,
+        interactions.start_interaction_position,
+        interactions.end_interaction_position,
+        IF(actions.action_ended,"SUCCEEDED",IF(actions.action_started,"FAILED","NO ATTEMPT")) as Status,
+        final_message.*,
+        actions.action, actions.action_started_position, actions.action_ended_position,
+        actions.action_started, actions.action_ended, actions.action_type,
+        to_json_string(execution_steps) as str_execution_steps
+FROM ${ref("dfcx_interaction")} as interactions
+  left join unnest(actions) as actions
+WHERE 1=1
+and interaction_head_intent = 'pmt_make_arrangement'
+and actions.action in ('PAYMENT_ARRANGEMENT','PMT_MAKE_ARRANGEMENT','PMT_MODIFY_ARRANGEMENT')
+),
+
+
+-----------------------------------------------
+-- Get some params from metadata_fte table --
+conv_sub_info as
+(
+  SELECT  
+    base_interactions.* except (str_execution_steps),
+    (case when str_execution_steps like '%DetermineNextRoute%' then true else false end) as determine_next_route_flag,
+    JSON_VALUE(session_parameters,'$.Event') AS last_event,
+    JSON_VALUE(session_parameters,'$.goal') AS last_goal,
+    JSON_VALUE(session_parameters,'$.BillingSource') as billing_source,
+from base_interactions as base_interactions
+inner JOIN ${ref("dfcx_transcript")} as conversation
+    ON base_interactions.session_id = conversation.session_id
+    AND base_interactions.end_interaction_position = conversation.position
+where 1=1
+)
+
+-----------------------------------------------
+-- Final Query --
+select
+        base_interactions.session_start_time, 
+        base_interactions.session_id,
+        base_interactions.status,
+        base_interactions.match_type,
+        base_interactions.source_page_display_name,
+        base_interactions.source_flow_display_name,
+        base_interactions.flow_display_name,
+        base_interactions.page_display_name,
+        base_interactions.intent_display_name,
+        GetBreakDown_L1(base_interactions.Status, last_event, last_goal, base_interactions.flow_display_name, base_interactions.page_display_name,
+                base_interactions.determine_next_route_flag) as status_breakdown_1,
+        GetBreakDown_L2(base_interactions.Status, last_event, last_goal, base_interactions.flow_display_name, base_interactions.page_display_name,
+                base_interactions.determine_next_route_flag) as status_breakdown_2,
+        last_event,
+        last_goal,
+        billing_source,
+        final_language_code,
+        heuristic_outcome.heuristic_outcome as improved_nsm_heuristic_outcome,
+        att_conversation.att_call_id,
+        att_conversation.is_call_recorded,
+        '[' || base_interactions.session_id || '](' || links.cobweb_url || '&authuser=' || '1' || ')' as cobweb_url,
+        CONCAT(
+            '[TE](',
+            'https://data.corp.google.com/sites/epgvfa2lqeur/att_transcript_explorer/?',
+            'f=conversation_create_date:eq:',
+            CAST(UNIX_MILLIS(TIMESTAMP(DATE(base_interactions.session_start_time))) AS STRING),
+            base_interactions.session_id,
+            ')') AS te_url
+from conv_sub_info as base_interactions
+  LEFT OUTER JOIN (SELECT * FROM ${ref("dfcx_session_common_lookups")}) as links on base_interactions.session_id = links.session_id
+  LEFT OUTER JOIN (SELECT * FROM ${ref("dfcx_session_heuristic_outcome")}) as heuristic_outcome on base_interactions.session_id = heuristic_outcome.session_id
+  LEFT OUTER JOIN (SELECT * FROM ${ref("dfcx_session_metadata")}) as att_conversation on base_interactions.session_id = att_conversation.session_id
+where 1=1

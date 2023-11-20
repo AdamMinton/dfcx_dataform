@@ -10,17 +10,6 @@ config {
     description: "Additional Transcript Transformations",
 }
 
-pre_operations {
-  DECLARE
-    request_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `select max(request_time) from ${self()}`,
-            `select timestamp("2000-01-01")`)
-    }
-    );
-}
-
 WITH
   final_data AS (
   SELECT
@@ -413,3 +402,14 @@ ON
   dt.session_id = alt_intent_final.session_id
   AND dt.position = alt_intent_final.position
   -- GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26
+
+pre_operations {
+  DECLARE
+    request_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `select max(request_time) from ${self()}`,
+            `select timestamp("2000-01-01")`)
+    }
+    );
+}

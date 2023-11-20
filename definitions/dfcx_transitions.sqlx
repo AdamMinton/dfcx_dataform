@@ -1,29 +1,39 @@
 config {
-  type: "table",
-  bigquery: {
-    partitionBy: "DATE(session_start_time)"
-  },
-  description: "DFCX transition information",
+    type: "table",
+    bigquery: {
+        partitionBy: "DATE(session_start_time)"
+    },
+    description: "DFCX transition information",
 }
 
 WITH
-webhook_failures as (
-  SELECT session_id
-  ,position
-  , MAX(CASE WHEN webhook_status <> 'OK' THEN TRUE ELSE FALSE END) as has_webhook_failure
-  FROM ${ref("dfcx_transcript")}
-    ,UNNEST(webhooks) as webhook
-  WHERE TRUE
-  GROUP BY 1,2
-),
-last_turns AS (
+  webhook_failures AS (
+  SELECT
+    session_id,
+    position,
+    MAX(CASE
+        WHEN webhook_status <> 'OK' THEN TRUE
+      ELSE
+      FALSE
+    END
+      ) AS has_webhook_failure
+  FROM
+    ${ref("dfcx_transcript")},
+    UNNEST(webhooks) AS webhook
+  WHERE
+    TRUE
+  GROUP BY
+    1,
+    2 ),
+  last_turns AS (
   SELECT
     session_id,
     MAX(position) AS last_position
-  FROM ${ref("dfcx_transcript")} AS turns
-  GROUP BY session_id
-),
-transitions AS (
+  FROM
+    ${ref("dfcx_transcript")} AS turns
+  GROUP BY
+    session_id ),
+  transitions AS (
   SELECT
     turns.project_id,
     turns.session_start_time,
@@ -32,15 +42,16 @@ transitions AS (
     turns.session_id,
     conversation.att_call_id,
     interaction.interaction_head_intent,
-    turns.source_flow_id as flow_id_before,
-    turns.flow_id as flow_id_after,
-    turns.source_page_display_name as page_before,
+    turns.source_flow_id AS flow_id_before,
+    turns.flow_id AS flow_id_after,
+    turns.source_page_display_name AS page_before,
     (
       CASE
         WHEN (turns.page_display_name = 'End Session' AND heuristic_outcome.heuristic_outcome = 'ESCALATED' AND turns.position = last_turns.last_position) THEN 'End Session (Escalated)'
-        ELSE turns.page_display_name
-      END
-    ) AS page_after,
+      ELSE
+      turns.page_display_name
+    END
+      ) AS page_after,
     LAG(turns.position) OVER (PARTITION BY turns.session_id ORDER BY turns.position) AS position_before,
     turns.position AS position_after,
     LAG(transcript.consolidated_agent_response) OVER (PARTITION BY turns.session_id ORDER BY turns.position) AS agent_response_before,
@@ -50,38 +61,54 @@ transitions AS (
     (
       CASE
         WHEN TRIM(turns.intent_display_name) != '' THEN turns.intent_display_name
-        ELSE CAST(turns.match_type AS STRING)
-      END
-    ) AS matched_intent,
+      ELSE
+      CAST(turns.match_type AS STRING)
+    END
+      ) AS matched_intent,
     turns.intent_confidence_score AS confidence,
-    heuristic_outcome.heuristic_outcome as outcome,
-    (heuristic_outcome.heuristic_outcome = 'ESCALATED') as is_escalated,
+    heuristic_outcome.heuristic_outcome AS outcome,
+    (heuristic_outcome.heuristic_outcome = 'ESCALATED') AS is_escalated,
     (turns.intent_display_name LIKE '%req_agent%') AS has_req_agent,
-    (turns.intent_display_name LIKE '%req_agent%' AND turns.page_display_name = 'End Session') AS has_req_agent_plus_escalation,
+    (turns.intent_display_name LIKE '%req_agent%'
+      AND turns.page_display_name = 'End Session') AS has_req_agent_plus_escalation,
     webhook_failures.has_webhook_failure,
     (transcript.match_type = 'NO_MATCH') AS has_no_match,
     (transcript.match_type = 'NO_INPUT') AS has_no_input,
     turns.language_code,
     turns.source_flow_display_name AS flow_before,
     turns.flow_display_name AS flow_after,
-  FROM ${ref("dfcx_transcript")} AS turns
-    INNER JOIN webhook_failures 
-      ON turns.session_id = webhook_failures.session_id
-      AND turns.position = webhook_failures.position
-    INNER JOIN ${ref("dfcx_session_metadata")} AS conversation
-      ON turns.session_id = conversation.session_id
-    INNER JOIN ${ref("dfcx_interaction")} AS interaction
-      ON turns.position BETWEEN interaction.start_interaction_position and interaction.end_interaction_position
-      AND turns.session_id = interaction.session_id
-    INNER JOIN last_turns
-      ON turns.session_id = last_turns.session_id
-    INNER JOIN ${ref("dfcx_session_heuristic_outcome")} as heuristic_outcome
-      ON turns.session_id = heuristic_outcome.session_id
-    INNER JOIN ${ref("dfcx_transcript_metadata")} as transcript
-      ON turns.session_id = transcript.session_id
-      AND turns.position = transcript.position
-  WHERE TRUE
-)
+  FROM
+    ${ref("dfcx_transcript")} AS turns
+  INNER JOIN
+    webhook_failures
+  ON
+    turns.session_id = webhook_failures.session_id
+    AND turns.position = webhook_failures.position
+  INNER JOIN
+    ${ref("dfcx_session_metadata")} AS conversation
+  ON
+    turns.session_id = conversation.session_id
+  INNER JOIN
+    ${ref("dfcx_interaction")} AS interaction
+  ON
+    turns.position BETWEEN interaction.start_interaction_position
+    AND interaction.end_interaction_position
+    AND turns.session_id = interaction.session_id
+  INNER JOIN
+    last_turns
+  ON
+    turns.session_id = last_turns.session_id
+  INNER JOIN
+    ${ref("dfcx_session_heuristic_outcome")} AS heuristic_outcome
+  ON
+    turns.session_id = heuristic_outcome.session_id
+  INNER JOIN
+    ${ref("dfcx_transcript_metadata")} AS transcript
+  ON
+    turns.session_id = transcript.session_id
+    AND turns.position = transcript.position
+  WHERE
+    TRUE )
 SELECT
   transitions.session_start_time,
   transitions.project_id,
@@ -110,5 +137,7 @@ SELECT
   transitions.has_no_match,
   transitions.has_no_input,
   transitions.language_code
-FROM transitions
-WHERE user_utterance NOT LIKE 'projects/%'
+FROM
+  transitions
+WHERE
+  user_utterance NOT LIKE 'projects/%'

@@ -1,180 +1,247 @@
 config {
-  type: "table",
-  bigquery: {
-    partitionBy: "DATE(session_start_time)"
-  },
-  assertions: {
-    uniqueKey: ["session_id"],
-    nonNull: ["session_id"]
-  },
-  description: "DFCX session summary information",
+    type: "table",
+    bigquery: {
+        partitionBy: "DATE(session_start_time)"
+    },
+    assertions: {
+        uniqueKey: ["session_id"],
+        nonNull: ["session_id"]
+    },
+    description: "DFCX session summary information",
 }
 
-with 
-log_info as (
-  SELECT 
-     conversation.session_id
-    ,conversation.project_id
-    ,conversation.session_start_time
-    ,MAX(parameters.att_call_id) as att_call_id
-    ,MAX(verint_id) as verint_id
-    ,COUNT(*) as number_of_turns
-    ,MAX(IF(project_id like '%chat%',NULLIF( TRIM( REPLACE( JSON_VALUE(session_parameters,'$.userAgentHeader'), 'Google-Dialogflow-', '')), ''),'VOICE')) as channel
-    -- , max(case when project_id like '%voice%' then 'VOICE' 
-    --         else 
+WITH
+  log_info AS (
+  SELECT
+    conversation.session_id,
+    conversation.project_id,
+    conversation.session_start_time,
+    MAX(parameters.att_call_id) AS att_call_id,
+    MAX(verint_id) AS verint_id,
+    COUNT(*) AS number_of_turns,
+    MAX(
+    IF
+      (project_id LIKE '%chat%',NULLIF( TRIM( REPLACE( JSON_VALUE(session_parameters,'$.userAgentHeader'), 'Google-Dialogflow-', '')), ''),'VOICE')) AS channel
+    -- , max(case when project_id like '%voice%' then 'VOICE'
+    --         else
     --         replace((SELECT nullif(trim(parameter_fields.value.string_value),'')
     --         FROM UNNEST(conversation.params_struct.fields) as parameter_fields
-    --         WHERE parameter_fields.key = 'userAgentHeader'),'Google-Dialogflow-','') 
+    --         WHERE parameter_fields.key = 'userAgentHeader'),'Google-Dialogflow-','')
     --       end) as channel
-  FROM ${ref("dfcx_transcript")} as conversation
-    INNER JOIN ${ref("dfcx_transcript_parameters")} as parameters
-      USING (session_id,position,request_time)
-  WHERE TRUE
-  GROUP BY 1,2,3
-)
-,language_code AS (
-  SELECT session_id, IF(last_intent_display_name = 'req_spanish','es-us',final_language_code) as final_language_code
-  FROM (
-    SELECT 
-      session_id
-      ,LAST_VALUE(
-        IF(LOWER(TRIM(language_code)) = 'en','en-us',COALESCE(NULLIF(LOWER(TRIM(language_code)),''),'en-us'))
-      ) OVER (PARTITION BY session_id ORDER BY position ASC RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as final_language_code
-      ,LAST_VALUE(intent_display_name) OVER (PARTITION BY session_id ORDER BY position ASC RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as last_intent_display_name
-    FROM ${ref("dfcx_transcript")}
-    WHERE TRUE
-      AND (NULLIF(trim(event),'') <> 'Hangup' OR NULLIF(trim(event),'') is null)
-  )
-  GROUP BY 1,2
-)
-,webhook as (
-  SELECT session_id
-  , MAX(CASE WHEN webhook_status <> 'OK' THEN TRUE ELSE FALSE END) as flag_failed_webhook
-  FROM ${ref("dfcx_transcript")}
-    ,UNNEST(webhooks) as webhook
-  WHERE TRUE 
-    AND webhook_status is not null
-  GROUP BY 1
-)
-,data as (
+  FROM
+    ${ref("dfcx_transcript")} AS conversation
+  INNER JOIN
+    ${ref("dfcx_transcript_parameters")} AS parameters
+  USING
+    (session_id,
+      position,
+      request_time)
+  WHERE
+    TRUE
+  GROUP BY
+    1,
+    2,
+    3 ),
+  language_code AS (
   SELECT
-    session_id
-  ,interaction_position
-  ,interaction_position_reverse
-  ,interaction_head_intent
-  ,interaction_provided_product_line
-  ,interaction_products_on_id
-  ,start_interaction_position
-  ,end_interaction_position
-  ,(SELECT MAX(action_started) FROM UNNEST(actions) WHERE primary_action = TRUE) as any_started_action
-  ,LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) as lag_01_interaction_head_intent
-  ,IF(LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) = interaction_head_intent, FALSE , TRUE) as change_from_previous_head_intent
-  ,final_message
-  ,actions
-  ,LAST_VALUE(interaction_provided_product_line IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY interaction_position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_interaction_provided_product_line
-  ,LAST_VALUE(interaction_products_on_id IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY interaction_position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_interaction_products_on_id
-  ,LAST_VALUE(interaction_consolidated_product IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY interaction_position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_interaction_consolidated_product
-  FROM ${ref("dfcx_interaction")}
-  WHERE TRUE
-)
-,removing_non_unique as (
-  SELECT 
-    session_id
-    ,interaction_position
-    ,interaction_head_intent
-    ,interaction_provided_product_line
-    ,interaction_products_on_id
-    ,actions.*
-    ,row_number() OVER (PARTITION BY session_id 
-      ORDER BY primary_action DESC --primary actions first
-        ,interaction_position DESC --latest interaction first
-        , action_started DESC --latest action started
-    ) as ranking
-  FROM data
-    ,UNNEST(actions) as actions
-  WHERE any_started_action = TRUE
-    AND change_from_previous_head_intent = TRUE
-)
-,finding_not_started as (
-  SELECT 
-    session_id
-    ,interaction_position
-    ,interaction_head_intent
-    ,interaction_provided_product_line
-    ,interaction_products_on_id
-    ,actions.*
-    ,row_number() OVER (PARTITION BY session_id 
-      ORDER BY primary_action DESC --primary actions first
-        ,interaction_position DESC --latest interaction first
-        , action_started DESC --latest action started
-    ) as ranking
-  FROM data
-    ,UNNEST(actions) as actions
-  WHERE session_id NOT IN (SELECT session_id FROM removing_non_unique)
-)
-,final_message as (
-  SELECT 
-    session_id
-    ,final_message
-    ,final_interaction_provided_product_line
-    ,final_interaction_products_on_id
-    ,final_interaction_consolidated_product
-  FROM data
-  WHERE interaction_position_reverse = 1
-)
-,union_actions as (
-  SELECT 
-    session_id
-    ,coalesce(interaction_head_intent,'Unidentified') as final_interaction_head_intent
-    ,interaction_provided_product_line
-    ,interaction_products_on_id
-    ,action
-    ,action_started
-    ,action_started_position
-    ,action_ended
-    ,action_ended_position
-    ,primary_flow
-  FROM removing_non_unique
-  WHERE ranking = 1
+    session_id,
+  IF
+    (last_intent_display_name = 'req_spanish','es-us',final_language_code) AS final_language_code
+  FROM (
+    SELECT
+      session_id,
+      LAST_VALUE(
+      IF
+        (LOWER(TRIM(language_code)) = 'en','en-us',COALESCE(NULLIF(LOWER(TRIM(language_code)),''),'en-us')) ) OVER (PARTITION BY session_id ORDER BY position ASC RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_language_code,
+      LAST_VALUE(intent_display_name) OVER (PARTITION BY session_id ORDER BY position ASC RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS last_intent_display_name
+    FROM
+      ${ref("dfcx_transcript")}
+    WHERE
+      TRUE
+      AND (NULLIF(TRIM(event),'') <> 'Hangup'
+        OR NULLIF(TRIM(event),'') IS NULL) )
+  GROUP BY
+    1,
+    2 ),
+  webhook AS (
+  SELECT
+    session_id,
+    MAX(CASE
+        WHEN webhook_status <> 'OK' THEN TRUE
+      ELSE
+      FALSE
+    END
+      ) AS flag_failed_webhook
+  FROM
+    ${ref("dfcx_transcript")},
+    UNNEST(webhooks) AS webhook
+  WHERE
+    TRUE
+    AND webhook_status IS NOT NULL
+  GROUP BY
+    1 ),
+  DATA AS (
+  SELECT
+    session_id,
+    interaction_position,
+    interaction_position_reverse,
+    interaction_head_intent,
+    interaction_provided_product_line,
+    interaction_products_on_id,
+    start_interaction_position,
+    end_interaction_position,
+    (
+    SELECT
+      MAX(action_started)
+    FROM
+      UNNEST(actions)
+    WHERE
+      primary_action = TRUE) AS any_started_action,
+    LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) AS lag_01_interaction_head_intent,
+  IF
+    (LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) = interaction_head_intent, FALSE, TRUE) AS change_from_previous_head_intent,
+    final_message,
+    actions,
+    LAST_VALUE(interaction_provided_product_line IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY interaction_position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_interaction_provided_product_line,
+    LAST_VALUE(interaction_products_on_id IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY interaction_position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_interaction_products_on_id,
+    LAST_VALUE(interaction_consolidated_product IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY interaction_position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_interaction_consolidated_product
+  FROM
+    ${ref("dfcx_interaction")}
+  WHERE
+    TRUE ),
+  removing_non_unique AS (
+  SELECT
+    session_id,
+    interaction_position,
+    interaction_head_intent,
+    interaction_provided_product_line,
+    interaction_products_on_id,
+    actions.*,
+    ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY primary_action DESC
+    --primary actions first
+      , interaction_position DESC
+      --latest interaction first
+      , action_started DESC
+      --latest action started
+      ) AS ranking
+  FROM
+    DATA,
+    UNNEST(actions) AS actions
+  WHERE
+    any_started_action = TRUE
+    AND change_from_previous_head_intent = TRUE ),
+  finding_not_started AS (
+  SELECT
+    session_id,
+    interaction_position,
+    interaction_head_intent,
+    interaction_provided_product_line,
+    interaction_products_on_id,
+    actions.*,
+    ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY primary_action DESC
+    --primary actions first
+      , interaction_position DESC
+      --latest interaction first
+      , action_started DESC
+      --latest action started
+      ) AS ranking
+  FROM
+    DATA,
+    UNNEST(actions) AS actions
+  WHERE
+    session_id NOT IN (
+    SELECT
+      session_id
+    FROM
+      removing_non_unique) ),
+  final_message AS (
+  SELECT
+    session_id,
+    final_message,
+    final_interaction_provided_product_line,
+    final_interaction_products_on_id,
+    final_interaction_consolidated_product
+  FROM
+    DATA
+  WHERE
+    interaction_position_reverse = 1 ),
+  union_actions AS (
+  SELECT
+    session_id,
+    COALESCE(interaction_head_intent,'Unidentified') AS final_interaction_head_intent,
+    interaction_provided_product_line,
+    interaction_products_on_id,
+    action,
+    action_started,
+    action_started_position,
+    action_ended,
+    action_ended_position,
+    primary_flow
+  FROM
+    removing_non_unique
+  WHERE
+    ranking = 1
   UNION ALL
-  SELECT    
-    session_id
-    ,coalesce(interaction_head_intent,'Unidentified') as final_interaction_head_intent
-    ,interaction_provided_product_line
-    ,interaction_products_on_id
-    ,'NO SELF SERVICE' as action
-    ,action_started
-    ,action_started_position
-    ,action_ended
-    ,action_ended_position
-    ,'Steering' as primary_flow
-  FROM finding_not_started
-  WHERE ranking = 1
-)
-SELECT 
-  log_info.session_id
-  ,log_info.project_id
-  ,log_info.att_call_id
-  ,log_info.verint_id
-  ,log_info.session_start_time
-  ,webhook.flag_failed_webhook
-  ,CASE WHEN log_info.verint_id is not null THEN TRUE ELSE FALSE END as is_call_recorded
-  ,final_message.final_message
-  ,union_actions.final_interaction_head_intent
-  ,final_message.final_interaction_provided_product_line AS interaction_provided_product_line
-  ,final_message.final_interaction_products_on_id AS interaction_products_on_id
-  ,union_actions.action as final_action
-  ,union_actions.action_started as final_action_started
-  ,union_actions.action_ended as final_action_ended
-  ,intent_info.pod as final_interaction_head_intent_pod
-  ,union_actions.primary_flow as final_action_primary_flow
-  ,log_info.number_of_turns
-  ,COALESCE(language_code.final_language_code,'en-us') as final_language_code
-  ,final_message.final_interaction_consolidated_product
-  ,log_info.channel
-FROM log_info
-  LEFT JOIN webhook on log_info.session_id = webhook.session_id
-  LEFT JOIN final_message ON log_info.session_id = final_message.session_id
-  LEFT JOIN union_actions ON log_info.session_id = union_actions.session_id
-  LEFT JOIN user_data.intent_info ON union_actions.final_interaction_head_intent = intent_info.df_intent_name
-  LEFT JOIN language_code ON log_info.session_id = language_code.session_id
+  SELECT
+    session_id,
+    COALESCE(interaction_head_intent,'Unidentified') AS final_interaction_head_intent,
+    interaction_provided_product_line,
+    interaction_products_on_id,
+    'NO SELF SERVICE' AS action,
+    action_started,
+    action_started_position,
+    action_ended,
+    action_ended_position,
+    'Steering' AS primary_flow
+  FROM
+    finding_not_started
+  WHERE
+    ranking = 1 )
+SELECT
+  log_info.session_id,
+  log_info.project_id,
+  log_info.att_call_id,
+  log_info.verint_id,
+  log_info.session_start_time,
+  webhook.flag_failed_webhook,
+  CASE
+    WHEN log_info.verint_id IS NOT NULL THEN TRUE
+  ELSE
+  FALSE
+END
+  AS is_call_recorded,
+  final_message.final_message,
+  union_actions.final_interaction_head_intent,
+  final_message.final_interaction_provided_product_line AS interaction_provided_product_line,
+  final_message.final_interaction_products_on_id AS interaction_products_on_id,
+  union_actions.action AS final_action,
+  union_actions.action_started AS final_action_started,
+  union_actions.action_ended AS final_action_ended,
+  intent_info.pod AS final_interaction_head_intent_pod,
+  union_actions.primary_flow AS final_action_primary_flow,
+  log_info.number_of_turns,
+  COALESCE(language_code.final_language_code,'en-us') AS final_language_code,
+  final_message.final_interaction_consolidated_product,
+  log_info.channel
+FROM
+  log_info
+LEFT JOIN
+  webhook
+ON
+  log_info.session_id = webhook.session_id
+LEFT JOIN
+  final_message
+ON
+  log_info.session_id = final_message.session_id
+LEFT JOIN
+  union_actions
+ON
+  log_info.session_id = union_actions.session_id
+LEFT JOIN
+  user_data.intent_info
+ON
+  union_actions.final_interaction_head_intent = intent_info.df_intent_name
+LEFT JOIN
+  language_code
+ON
+  log_info.session_id = language_code.session_id

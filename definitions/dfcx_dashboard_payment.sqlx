@@ -81,7 +81,8 @@ conv_sub_info as
           ,JSON_VALUE(session_parameters,'$.BillingSource') as billing_source
 from base_interactions as base_interactions
 inner JOIN ${ref("dfcx_transcript")} as conversation
-      ON base_interactions.session_id = conversation.session_id  and base_interactions.end_interaction_position = conversation.position
+      ON base_interactions.session_id = conversation.session_id
+      AND base_interactions.end_interaction_position = conversation.position
 where 1=1
 ),
 -- count all turns in make payment flow --
@@ -145,7 +146,7 @@ select
         heuristic_outcome.heuristic_outcome as improved_nsm_heuristic_outcome,
         att_conversation.att_call_id,
         att_conversation.is_call_recorded,
-        '[' || base_interactions.session_id || '](' || links.conversation_url || '&authuser=' || '1' || ')' as session_id_url,
+        '[' || base_interactions.session_id || '](' || links.cobweb_url || '&authuser=' || '1' || ')' as cobweb_url,
         CONCAT(
             '[TE](',
             'https://data.corp.google.com/sites/epgvfa2lqeur/att_transcript_explorer/?',

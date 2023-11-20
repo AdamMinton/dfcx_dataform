@@ -90,17 +90,8 @@ SELECT
   heuristic_outcome.heuristic_outcome AS improved_nsm_heuristic_outcome,
   att_conversation.att_call_id,
   att_conversation.is_call_recorded,
-  '[' || base_interactions.session_id || '](' || links.cobweb_url || '&authuser=' || '1' || ')' AS cobweb_url,
-  CONCAT( '[TE](', 'https://data.corp.google.com/sites/epgvfa2lqeur/att_transcript_explorer/?', 'f=conversation_create_date:eq:', CAST(UNIX_MILLIS(TIMESTAMP(DATE(base_interactions.session_start_time))) AS STRING), base_interactions.session_id, ')') AS te_url
 FROM
   conv_sub_info AS base_interactions
-LEFT OUTER JOIN (
-  SELECT
-    *
-  FROM
-    ${ref("dfcx_session_common_lookups")}) AS links
-ON
-  base_interactions.session_id = links.session_id
 LEFT OUTER JOIN (
   SELECT
     *

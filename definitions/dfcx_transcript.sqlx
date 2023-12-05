@@ -11,6 +11,17 @@ config {
 }
 
 WITH
+  _self AS (
+  SELECT
+    incremental_run,
+    session_id,
+    MAX(position) AS last_loaded_position
+  FROM
+    ${self()}
+  WHERE request_time > TIMESTAMP_SUB(request_time_checkpoint, INTERVAL 1 DAY)
+  GROUP BY
+    1,
+    2 ),
   base_data AS (
   SELECT
     dfcx.project_id AS project_id,
@@ -19,9 +30,12 @@ WITH
     ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] AS session_id,
     JSON_VALUE(dfcx.response,'$.responseId') AS response_id,
     dfcx.request_time AS request_time,
-    ROW_NUMBER() OVER (PARTITION BY ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)]
-    ORDER BY
-      request_time ASC) AS position,
+  IF
+    (incremental_run = TRUE, COALESCE(last_loaded_position,0) + ROW_NUMBER() OVER (PARTITION BY ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)]
+      ORDER BY
+        request_time ASC),ROW_NUMBER() OVER (PARTITION BY ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)]
+      ORDER BY
+        request_time ASC)) AS position,
     JSON_VALUE(dfcx.request,'$.queryInput.text.text') AS user_utterance,
     JSON_VALUE(dfcx.request,'$.queryInput.dtmf.digits') AS optional_dtmf_digits,
     ARRAY_REVERSE(SPLIT(JSON_VALUE(dfcx.response,'$.queryResult.intent.name'),'/'))[SAFE_OFFSET(0)] AS intent_display_id,
@@ -38,6 +52,10 @@ WITH
     JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Alternative Matched Intents') AS alternative_matched_intents
   FROM
     `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` AS dfcx
+  LEFT JOIN
+    _self
+  ON
+    ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] = _self.session_id
   WHERE
     TRUE
     AND request_time > request_time_checkpoint QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY request_time DESC) = 1 ),
@@ -286,6 +304,14 @@ pre_operations {
         when(incremental(),
             `select max(request_time) from ${self()}`,
             `select timestamp("2000-01-01")`)
+    }
+    );
+  DECLARE
+    incremental_run DEFAULT (
+    ${
+        when(incremental(),
+            'TRUE',
+            'FALSE')
     }
     );
 }

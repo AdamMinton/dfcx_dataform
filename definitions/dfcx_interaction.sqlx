@@ -125,7 +125,9 @@ WITH
     NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.HowDelivered')),'') AS how_delivered,
     NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.SMSType')),'') AS sms_type,
     NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.smsNeedsResponse')),'') AS sms_needs_response,
-    NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.VoiceFaqId')),'') AS voice_faq_id
+    NULLIF(TRIM(JSON_VALUE(session_parameters_updated,'$.VoiceFaqId')),'') AS voice_faq_id,
+    JSON_VALUE_ARRAY(session_parameters_updated,'$.providedproductline') AS provided_product_line,
+    JSON_VALUE_ARRAY(session_parameters_updated,'$.productsOnID.value') AS products_on_id
   FROM
     ${ref("dfcx_transcript")},
     UNNEST(execution_sequence) AS es
@@ -157,7 +159,9 @@ WITH
     LAST_VALUE(sms_type IGNORE NULLS) OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING ) AS sms_type,
     LAST_VALUE(sms_needs_response IGNORE NULLS) OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING ) AS sms_needs_response,
     LAST_VALUE(flag_head_intent_changed IGNORE NULLS) OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING ) AS flag_head_intent_changed,
-    LAST_VALUE(voice_faq_id IGNORE NULLS) OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING ) AS voice_faq_id
+    LAST_VALUE(voice_faq_id IGNORE NULLS) OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING ) AS voice_faq_id,
+    LAST_VALUE(provided_product_line IGNORE NULLS) OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING ) AS provided_product_line,
+    LAST_VALUE(products_on_id IGNORE NULLS) OVER (PARTITION BY session_id, response_id ORDER BY step ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING ) AS products_on_id
   FROM
     execution_steps_processing
   WHERE
@@ -202,8 +206,8 @@ WITH
     execution_steps_message.sms_needs_response,
     execution_steps_message.voice_faq_id,
     transcript_processing.project_id,
-    transcript_processing.products_on_id,
-    transcript_processing.provided_product_line,
+    COALESCE(execution_steps_message.products_on_id,transcript_processing.products_on_id) as products_on_id,
+    COALESCE(execution_steps_message.provided_product_line,transcript_processing.provided_product_line) as provided_product_line,
     execution_steps_message.flag_head_intent_changed,
     execution_steps_message.head_intent_updated,
     transcript_processing.isAuthenticated,

@@ -15,10 +15,12 @@ WITH
   SELECT
     incremental_run,
     session_id,
-    MAX(position) AS last_loaded_position
+    MAX(position) AS last_loaded_position,
+    MIN(request_time) AS first_request_time
   FROM
     ${self()}
-  WHERE request_time > TIMESTAMP_SUB(request_time_checkpoint, INTERVAL 1 DAY)
+  WHERE
+    request_time > TIMESTAMP_SUB(request_time_checkpoint, INTERVAL 1 DAY)
   GROUP BY
     1,
     2 ),
@@ -180,11 +182,16 @@ WITH
     execution_sequence_agg ),
   session AS (
   SELECT
-    session_id,
-    MIN(request_time) AS session_start_time,
-    MAX(request_time) AS session_end_time
+    base_data.session_id,
+  IF
+    (MIN(_self.first_request_time) < MIN(base_data.request_time),MIN(_self.first_request_time), MIN(base_data.request_time)) AS session_start_time,
+    MAX(base_data.request_time) AS session_end_time
   FROM
     base_data
+  LEFT JOIN
+    _self
+  ON
+    base_data.session_id = _self.session_id
   GROUP BY
     1 ),
   agent_response AS (

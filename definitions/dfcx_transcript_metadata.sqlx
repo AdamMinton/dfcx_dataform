@@ -1,8 +1,10 @@
 config {
     type: "incremental",
     bigquery: {
-        partitionBy: "DATE(session_start_time)"
+        partitionBy: "DATE(session_start_time)",
+        updatePartitionFilter: "session_start_time >= timestamp_sub(current_timestamp(), interval 3 hour)"
     },
+    uniqueKey: ["session_id", "position"],
     assertions: {
         uniqueKey: ["session_id", "position"],
         nonNull: ["session_id", "position"]

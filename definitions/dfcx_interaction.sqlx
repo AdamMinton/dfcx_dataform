@@ -1,8 +1,10 @@
 config {
     type: "incremental",
     bigquery: {
-        partitionBy: "DATE(session_start_time)"
+        partitionBy: "DATE(session_start_time)",
+        updatePartitionFilter: "session_start_time >= timestamp_sub(current_timestamp(), interval 3 hour)"
     },
+    uniqueKey: ["session_id", "interaction_position"],
     assertions: {
         uniqueKey: ["session_id", "interaction_position"],
         nonNull: ["session_id", "interaction_position"]
@@ -56,7 +58,7 @@ WITH
       position)
   WHERE
     TRUE
-    AND conv.request_time > request_time_checkpoint ),
+    AND conv.session_start_time > session_start_time_checkpoint ),
   transcript_processing AS (
   SELECT
     * EXCEPT(head_intent),
@@ -133,7 +135,7 @@ WITH
     UNNEST(execution_sequence) AS es
   WHERE
     1=1
-    AND request_time > request_time_checkpoint ),
+    AND session_start_time > session_start_time_checkpoint ),
   execution_steps_processing AS (
   SELECT
     * EXCEPT(head_intent_updated),
@@ -206,8 +208,8 @@ WITH
     execution_steps_message.sms_needs_response,
     execution_steps_message.voice_faq_id,
     transcript_processing.project_id,
-    COALESCE(execution_steps_message.products_on_id,transcript_processing.products_on_id) as products_on_id,
-    COALESCE(execution_steps_message.provided_product_line,transcript_processing.provided_product_line) as provided_product_line,
+    COALESCE(execution_steps_message.products_on_id,transcript_processing.products_on_id) AS products_on_id,
+    COALESCE(execution_steps_message.provided_product_line,transcript_processing.provided_product_line) AS provided_product_line,
     execution_steps_message.flag_head_intent_changed,
     execution_steps_message.head_intent_updated,
     transcript_processing.isAuthenticated,
@@ -356,7 +358,7 @@ WITH
     ----- Chat Conversations -------------
       WHEN project_id IN ('att-ccai-chat-prod', 'att-ccai-chat-staging') THEN CASE
       WHEN es.position = 1 THEN TRUE
-      -- Assumption: Chat conversations would only have 1 turn
+    -- Assumption: Chat conversations would only have 1 turn
     ELSE
     NULL
   END
@@ -687,7 +689,7 @@ WITH
     END
     END
       ) AS action_started
-      --stays max for detecting of boolean
+    --stays max for detecting of boolean
     ,
     MIN(CASE
         WHEN actions.start_flow || '~' || actions.start_page = int.flow_and_page THEN int.position
@@ -695,7 +697,7 @@ WITH
       NULL
     END
       ) AS action_started_position
-      --min to capture when the first position with page happens
+    --min to capture when the first position with page happens
     ,
     MIN(CASE
         WHEN actions.start_flow || '~' || actions.start_page = int.flow_and_page THEN int.timestamp
@@ -703,7 +705,7 @@ WITH
       NULL
     END
       ) AS action_started_timestamp
-      --min to capture when the first timestamp
+    --min to capture when the first timestamp
     ,
     MAX(CASE
         WHEN actions.channel = 'CHAT' AND actions.action = 'AUTHENTICATION' THEN CASE
@@ -719,7 +721,7 @@ WITH
     END
     END
       ) AS action_ended
-      --stays max for detecting of boolean
+    --stays max for detecting of boolean
     ,
     MAX(CASE
         WHEN actions.end_flow || '~' || actions.end_page = int.flow_and_page THEN int.position
@@ -727,7 +729,7 @@ WITH
       NULL
     END
       ) AS action_ended_position
-      --max to capture the last position with page
+    --max to capture the last position with page
     ,
     MAX(CASE
         WHEN actions.end_flow || '~' || actions.end_page = int.flow_and_page THEN int.timestamp
@@ -735,7 +737,7 @@ WITH
       NULL
     END
       ) AS action_ended_timestamp
-      --max to capture the last timestamp with page
+    --max to capture the last timestamp with page
   FROM
     unnest_execution_steps AS int
   LEFT JOIN
@@ -1019,10 +1021,10 @@ USING
 
 pre_operations {
   DECLARE
-    request_time_checkpoint DEFAULT (
+    session_start_time_checkpoint DEFAULT (
     ${
         when(incremental(),
-            `select max(session_start_time) from ${self()}`,
+            `select timestamp_sub(max(session_start_time),interval 10 minute) from ${self()}`,
             `select timestamp("2000-01-01")`)
     }
     );

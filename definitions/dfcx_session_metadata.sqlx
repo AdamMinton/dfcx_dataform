@@ -16,6 +16,7 @@ WITH
     conversation.session_id,
     conversation.project_id,
     conversation.session_start_time,
+    conversation.session_end_time,
     MAX(parameters.att_call_id) AS att_call_id,
     MAX(verint_id) AS verint_id,
     COUNT(*) AS number_of_turns,
@@ -41,7 +42,8 @@ WITH
   GROUP BY
     1,
     2,
-    3 ),
+    3,
+    4 ),
   language_code AS (
   SELECT
     session_id,
@@ -118,7 +120,7 @@ WITH
     interaction_products_on_id,
     actions.*,
     ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY primary_action DESC
-    --primary actions first
+      --primary actions first
       , interaction_position DESC
       --latest interaction first
       , action_started DESC
@@ -139,7 +141,7 @@ WITH
     interaction_products_on_id,
     actions.*,
     ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY primary_action DESC
-    --primary actions first
+      --primary actions first
       , interaction_position DESC
       --latest interaction first
       , action_started DESC
@@ -203,6 +205,7 @@ SELECT
   log_info.att_call_id,
   log_info.verint_id,
   log_info.session_start_time,
+  log_info.session_end_time,
   webhook.flag_failed_webhook,
   CASE
     WHEN log_info.verint_id IS NOT NULL THEN TRUE

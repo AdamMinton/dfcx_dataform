@@ -79,7 +79,7 @@ WITH
     turns.flow_display_name AS flow_after,
   FROM
     ${ref("dfcx_transcript")} AS turns
-  INNER JOIN
+  LEFT JOIN
     webhook_failures
   ON
     turns.session_id = webhook_failures.session_id

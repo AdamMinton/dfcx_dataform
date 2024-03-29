@@ -241,9 +241,9 @@ LEFT JOIN
 ON
   log_info.session_id = union_actions.session_id
 LEFT JOIN
-  user_data.intent_info
+  user_defined_data.dfcx_intent AS intent_info
 ON
-  union_actions.final_interaction_head_intent = intent_info.df_intent_name
+  union_actions.final_interaction_head_intent = intent_info.dfcx_intent_name
 LEFT JOIN
   language_code
 ON

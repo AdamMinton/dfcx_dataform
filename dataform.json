@@ -2,10 +2,9 @@
   "defaultSchema": "dataform",
   "assertionSchema": "dataform_assertions",
   "warehouse": "bigquery",
-  "defaultDatabase": "att-aam-external",
+  "defaultDatabase": "whisper-test-378918",
   "defaultLocation": "US",
   "vars": {
-    "dialogflowExport":"dialogflow_cx_exports.conversation_logs"
+    "dialogflowExport":"insights_demo.dialogflow_bigquery_export_data"
   }
 }
-    

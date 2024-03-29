@@ -578,7 +578,7 @@ WITH
     valid_from,
     valid_to
   FROM
-    user_data.intent_specific_actions
+    user_defined_data.intent_specific_actions
   WHERE
     start_page IS NOT NULL
     AND end_page IS NOT NULL
@@ -604,7 +604,7 @@ WITH
     FROM
       interaction_information) AS a
   CROSS JOIN
-    user_data.intent_agnostic_actions b
+    user_defined_data.intent_agnostic_actions b
   WHERE
     a.channel = b.channel
     --  UNION ALL

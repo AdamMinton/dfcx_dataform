@@ -1024,7 +1024,9 @@ pre_operations {
     session_start_time_checkpoint DEFAULT (
     ${
         when(incremental(),
-            `select timestamp_sub(max(session_start_time),interval 10 minute) from ${self()}`,
+            `IF((select max(session_start_time) from ${self()}) < (select max(session_start_time) from ${ref("dfcx_transcript")}),
+            (select timestamp_sub(max(session_start_time),interval 10 minute) from ${self()}), (select current_timestamp()))
+             `,
             `select timestamp("2000-01-01")`)
     }
     );

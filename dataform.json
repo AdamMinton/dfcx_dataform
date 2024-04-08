@@ -4,6 +4,7 @@
   "warehouse": "bigquery",
   "defaultDatabase": "whisper-test-378918",
   "defaultLocation": "US",
+  "schemaSuffix": "dev",
   "vars": {
     "dialogflowExport":"insights_demo.dialogflow_bigquery_export_data"
   }

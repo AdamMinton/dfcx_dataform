@@ -237,6 +237,8 @@ WITH
   WITH
   OFFSET
     AS alternative_matched_intents_offset
+  WHERE
+    JSON_VALUE(alternative_matched_intent,'$.DisplayName') <> base_data.intent_display_name
   GROUP BY
     1,
     2 )

@@ -9,6 +9,28 @@ config {
         uniqueKey: ["session_id", "position"],
         nonNull: ["session_id", "position"]
     },
+    columns: {
+      session_parameters: {
+        bigqueryPolicyTags: ["projects/whisper-test-378918/locations/us/taxonomies/5299390094260997840/policyTags/4888623121722887018"]
+      },
+      execution_sequence: {
+        columns: {
+          session_parameters_initial: {
+            bigqueryPolicyTags: ["projects/whisper-test-378918/locations/us/taxonomies/5299390094260997840/policyTags/4888623121722887018"]
+          },
+          session_parameters_updated: {
+            bigqueryPolicyTags: ["projects/whisper-test-378918/locations/us/taxonomies/5299390094260997840/policyTags/4888623121722887018"]
+          }
+        }
+      },
+      webhooks: {
+        columns: {
+          session_parameters_updated: {
+            bigqueryPolicyTags: ["projects/whisper-test-378918/locations/us/taxonomies/5299390094260997840/policyTags/4888623121722887018"]
+          }
+        }
+      }
+    },
     description: "Main reporting table for DFCX conversations",
 }
 

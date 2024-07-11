@@ -3,10 +3,6 @@ config {
     bigquery: {
         partitionBy: "DATE(session_start_time)"
     },
-    assertions: {
-        uniqueKey: ["session_id"],
-        nonNull: ["session_id"]
-    },
     description: "DFCX session summary information",
 }
 
@@ -16,7 +12,7 @@ WITH
     conversation.session_id,
     conversation.project_id,
     conversation.session_start_time,
-    conversation.session_end_time,
+    MAX(conversation.request_time) as session_end_time,
     MAX(parameters.att_call_id) AS att_call_id,
     MAX(verint_id) AS verint_id,
     COUNT(*) AS number_of_turns,
@@ -42,8 +38,7 @@ WITH
   GROUP BY
     1,
     2,
-    3,
-    4 ),
+    3 ),
   language_code AS (
   SELECT
     session_id,

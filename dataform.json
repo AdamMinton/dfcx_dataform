@@ -6,6 +6,7 @@
   "defaultLocation": "US",
   "schemaSuffix": "ccai_development",
   "vars": {
-    "dialogflowExport":"insights_demo.dialogflow_bigquery_export_data"
+    "dialogflowExport":"insights_demo.dialogflow_bigquery_export_data",
+    "cloudStorageDialogflowExport":"cloud_storage.dfcx_logs_test_3"
   }
 }

@@ -1,0 +1,81 @@
+config {
+    type: "incremental",
+    bigquery: {
+        partitionBy: "DATE(session_start_time)",
+        updatePartitionFilter: "session_start_time >= timestamp_sub(current_timestamp(), interval 2 DAY)"
+    },
+    uniqueKey: ["session_id", "position"],
+    description: "ELT assistance table to filter duplicate rows and create new position",
+}
+
+WITH
+  recent_insert_data AS (
+  SELECT
+    _PARTITIONTIME,
+    ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] AS session_id,
+    request_time,
+  FROM
+    `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` AS dfcx
+  WHERE
+    TRUE
+    AND DATE(_PARTITIONTIME) >= DATE(request_time_checkpoint)
+    AND request_time > request_time_checkpoint
+  QUALIFY
+    ROW_NUMBER() OVER (PARTITION BY session_id, request_time ORDER BY request_time DESC) = 1 ),
+  all_session_records AS (
+  SELECT
+    _PARTITIONTIME,
+    ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] AS session_id,
+    request_time,
+  FROM
+    `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` AS dfcx
+  WHERE
+    TRUE
+    AND DATE(_PARTITIONTIME) >= DATE(TIMESTAMP_SUB(request_time_checkpoint, INTERVAL 2 HOUR))
+    AND request_time > TIMESTAMP_SUB(request_time_checkpoint, INTERVAL 2 HOUR)
+    AND ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] IN (
+    SELECT
+      session_id
+    FROM
+      recent_insert_data) ),
+  union_distinct AS (
+  SELECT
+    *
+  FROM
+    recent_insert_data
+    ${
+        when(incremental(),
+            `UNION ALL SELECT * FROM all_session_records`,
+            ``)
+    }
+    ),
+  session_start_time AS (
+  SELECT
+    session_id,
+    MIN(request_time) AS session_start_time
+  FROM
+    union_distinct
+  GROUP BY
+    1 )
+SELECT
+  session_start_time.session_start_time,
+  session_id,
+  request_time,
+  ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY request_time ASC) AS position
+FROM
+  union_distinct
+LEFT JOIN
+  session_start_time
+USING
+  (session_id)
+
+pre_operations {
+  DECLARE
+    request_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT MAX(request_time) FROM ${self()}`,
+            `SELECT TIMESTAMP('2000-01-01')`)
+    }
+    );
+}

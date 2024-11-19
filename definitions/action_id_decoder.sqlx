@@ -1,0 +1,10 @@
+config {
+    type: "table",
+    uniqueKey: ["action_id"],
+    description: "ETL helper table for decoding action_id",
+}
+
+SELECT '6161f045-21b3-46a5-9d12-fdkajflkda' as action_id, 'Test' as action_name
+UNION ALL SELECT '6d15a4ad-00b4-4557-bb7f-voodpa' as action_id, 'Test' as action_name
+UNION ALL SELECT '42739748-dfafda-4501-a2e1-63288076bb63' as action_id, 'Test' as action_name
+UNION ALL SELECT 'fd;.dfda-0be9-4170-89b1-60945f541ce2' as action_id, 'Test' as action_name

@@ -37,7 +37,8 @@ WITH
     COALESCE(SAFE_DIVIDE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.outputAudioDuration.nanos') AS INT64),1000000),0) 
       + COALESCE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.outputAudioDuration.seconds') AS INT64) * 1000,0) AS output_audio_ms,
     JSON_VALUE(dfcx.derived_data,'$.agentUtterances') as agent_response,
-    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.actionTracingInfo.actions') as actions
+    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.actionTracingInfo.actions') as actions,
+    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.currentPlaybooks') as current_playbooks
   FROM
     `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` AS dfcx
   INNER JOIN
@@ -50,6 +51,7 @@ WITH
     TRUE
     AND DATE(_PARTITIONTIME) >= DATE(request_time_checkpoint)
     AND dfcx.request_time > TIMESTAMP_SUB(request_time_checkpoint, INTERVAL 2 HOUR)
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY request_time DESC) = 1
   ),
   execution_sequence AS (
   SELECT
@@ -271,26 +273,14 @@ WITH
         WHEN JSON_EXTRACT(action,'$.playbookInvocation') IS NOT NULL THEN 'playbookInvocation'
         WHEN JSON_EXTRACT(action,'$.flowInvocation') IS NOT NULL THEN 'flowInvocation'
       END as action,
-      COALESCE(
-        JSON_VALUE(action,'$.toolUse.tool'),
-        JSON_VALUE(action,'$.playbookInvocation.playbook'),
-        JSON_VALUE(action,'$.flowInvocation.flow')
-      ) as action_id,
-      COALESCE(
-        JSON_VALUE(action,'$.toolUse.action')
-      ) as action_name,
-      COALESCE(
-        JSON_QUERY(action,'$.toolUse.inputParameters'),
-        JSON_QUERY(action,'$.playbookInvocation.playbookInput'),
-        JSON_QUERY(action,'$.flowInvocation.inputActionParameters')
-      ) as action_input,
-      COALESCE(
-        JSON_QUERY(action,'$.toolUse.outputParameters'),
-        JSON_QUERY(action,'$.playbookInvocation.playbookOutput'),
-        JSON_OBJECT()
-      ) as action_output
+      COALESCE( ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)], ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)], ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) AS action_id,
+      COALESCE( JSON_VALUE(action,'$.toolUse.action'),action_id_decoder.action_name) AS action_name,
+      COALESCE(JSON_QUERY(action,'$.toolUse.inputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookInput'),JSON_QUERY(action,'$.flowInvocation.inputActionParameters')) as action_input,
+      COALESCE(JSON_QUERY(action,'$.toolUse.outputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookOutput'),JSON_OBJECT()) as action_output
     FROM base_data
       LEFT JOIN UNNEST(actions) as action WITH OFFSET as action_step
+      LEFT JOIN ${ref("action_id_decoder")} AS action_id_decoder
+        ON COALESCE( ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)], ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)], ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) = action_id_decoder.action_id
     WHERE TRUE
       AND (COALESCE(
         JSON_VALUE(action,'$.playbookInvocation.playbookState'),
@@ -321,7 +311,31 @@ WITH
       ) as actions
     FROM actions
     GROUP BY 1,2
-  )
+  ),
+  playbooks AS (
+    SELECT
+      session_id,
+      position,
+      playbook_step,
+      ARRAY_REVERSE(SPLIT(JSON_VALUE(current_playbook,'$'),'/'))[SAFE_OFFSET(0)] AS playbook_id,
+      COALESCE(action_id_decoder.action_name) AS playbook_name
+  FROM
+    base_data
+  LEFT JOIN UNNEST(current_playbooks) as current_playbook WITH OFFSET as playbook_step
+  LEFT JOIN
+    ${ref("action_id_decoder")} AS action_id_decoder
+  ON
+    ARRAY_REVERSE(SPLIT(JSON_VALUE(current_playbook,'$'),'/'))[SAFE_OFFSET(0)] = action_id_decoder.action_id ),
+  playbooks_agg AS (
+  SELECT
+    session_id,
+    position,
+    ARRAY_AGG(STRUCT(playbook_step,playbook_id,playbook_name )) AS playbooks
+  FROM
+    playbooks
+  GROUP BY
+    1,
+    2 )
 SELECT
   base_data.project_id,
   base_data.location,
@@ -356,6 +370,7 @@ SELECT
   base_data.input_audio_ms,
   base_data.output_audio_ms,
   actions_agg.actions,
+  playbooks_agg.playbooks
 FROM
   base_data
 LEFT JOIN
@@ -380,6 +395,11 @@ USING
     position)
 LEFT JOIN
   actions_agg
+USING
+  (session_id,
+    position)
+LEFT JOIN
+  playbooks_agg
 USING
   (session_id,
     position)

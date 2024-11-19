@@ -57,7 +57,7 @@ WITH
   SELECT
     step + 1 AS step,
     session_id,
-    position,
+    response_id,
     REGEXP_REPLACE(REGEXP_REPLACE(TO_JSON_STRING(execution_sequence),r'Step \d+','Step X'),r'SessionParameters\(Updated\)','SessionParameters') AS execution_sequence_step
   FROM
     base_data
@@ -71,12 +71,13 @@ WITH
   execution_sequence_parse AS (
   SELECT
     session_id,
-    position,
+    response_id,
     step,
     JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.FlowId') AS flow_id_initial_state,
     JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.Name') AS flow_display_name_initial_state,
     JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.PageId') AS page_id_initial_state,
     JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.Name') AS page_display_name_initial_state,
+    COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.InitialState.MatchedIntent'))),JSON_OBJECT()) AS matched_intent,
     JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.Status') AS status_initial_state,
     COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.InitialState.SessionParameters'))),JSON_OBJECT()) AS session_parameters_initial,
     JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.FlowId') AS flow_id,
@@ -85,7 +86,7 @@ WITH
     JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.Name') AS page_display_name,
     JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.Status') AS status,
     COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SessionParameters'))),JSON_OBJECT()) AS session_parameters_updated,
-    JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SystemFunctionResults') AS system_function_results,
+    COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SystemFunctionResults'))), JSON_OBJECT()) AS system_function_results,
     JSON_QUERY_ARRAY(execution_sequence_step,'$.Step X.FunctionExecution.Responses') AS responses,
     JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredTransitionRouteId') AS triggered_transition_route_id,
     JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredIntent') AS triggered_intent,
@@ -103,7 +104,7 @@ WITH
   execution_steps_durations AS (
   SELECT
     session_id,
-    position,
+    response_id,
     SAFE_CAST(REGEXP_EXTRACT(execution_step_duration, r'Step (\d+)') AS INT64) AS duration_step,
     SAFE_CAST(REGEXP_EXTRACT(execution_step_duration, r':(\d+)') AS INT64) AS step_ms
   FROM
@@ -112,7 +113,7 @@ WITH
   determine_execution_sequence_components AS (
   SELECT
     session_id,
-    position,
+    response_id,
     step,
   IF
     (JSON_QUERY(execution_sequence.execution_sequence_step, '$.Step X.InitialState') IS NULL, 0, 1) AS initial_state_present,
@@ -125,26 +126,26 @@ WITH
   find_duration_end_ranges AS (
   SELECT
     session_id,
-    position,
+    response_id,
     step,
     initial_state_present + state_machine_present + function_execution_present AS components_present,
-    SUM(initial_state_present + state_machine_present + function_execution_present) OVER (PARTITION BY session_id, position ORDER BY step ASC) AS end_duration_step
+    SUM(initial_state_present + state_machine_present + function_execution_present) OVER (PARTITION BY session_id, response_id ORDER BY step ASC) AS end_duration_step
   FROM
     determine_execution_sequence_components ),
   find_duration_start_ranges AS (
   SELECT
     session_id,
-    position,
+    response_id,
     step,
     components_present,
-    COALESCE(LAG(end_duration_step,1) OVER (PARTITION BY session_id, position ORDER BY step ASC)+1,1) AS start_duration_step,
+    COALESCE(LAG(end_duration_step,1) OVER (PARTITION BY session_id, response_id ORDER BY step ASC)+1,1) AS start_duration_step,
     end_duration_step
   FROM
     find_duration_end_ranges ),
   associate_durations_to_step AS (
   SELECT
     execution_sequence_parse.session_id,
-    execution_sequence_parse.position,
+    execution_sequence_parse.response_id,
     execution_sequence_parse.step,
     SUM(execution_steps_durations.step_ms) AS total_step_ms
   FROM
@@ -153,13 +154,13 @@ WITH
     find_duration_start_ranges
   ON
     execution_sequence_parse.session_id = find_duration_start_ranges.session_id
-    AND execution_sequence_parse.position = find_duration_start_ranges.position
+    AND execution_sequence_parse.response_id = find_duration_start_ranges.response_id
     AND execution_sequence_parse.step = find_duration_start_ranges.step
   LEFT JOIN
     execution_steps_durations
   ON
     execution_steps_durations.session_id = find_duration_start_ranges.session_id
-    AND execution_steps_durations.position = find_duration_start_ranges.position
+    AND execution_steps_durations.response_id = find_duration_start_ranges.response_id
     AND execution_steps_durations.duration_step BETWEEN find_duration_start_ranges.start_duration_step
     AND find_duration_start_ranges.end_duration_step
   GROUP BY
@@ -169,7 +170,7 @@ WITH
   execution_sequence_agg AS (
   SELECT
     session_id,
-    position,
+    response_id,
     COUNT(*) AS execution_sequence_count,
     ARRAY_AGG(STRUCT( step,
         COALESCE(flow_id_initial_state,flow_id) AS flow_id,
@@ -181,6 +182,7 @@ WITH
         session_parameters_updated,
         system_function_results,
         responses,
+        matched_intent,
         triggered_transition_route_id,
         triggered_intent,
         triggered_condition,
@@ -201,7 +203,7 @@ WITH
     associate_durations_to_step
   USING
     (session_id,
-      position,
+      response_id,
       step)
   GROUP BY
     1,
@@ -209,7 +211,7 @@ WITH
   webhook_agg AS (
   SELECT
     session_id,
-    position,
+    response_id,
     ARRAY_AGG(STRUCT( step,
         flow_id,
         flow_display_name,
@@ -233,7 +235,7 @@ WITH
   source_and_target_page AS (
   SELECT
     session_id,
-    position,
+    response_id,
     execution_sequence[SAFE_OFFSET(0)].flow_id AS source_flow_id,
     execution_sequence[SAFE_OFFSET(0)].flow_display_name AS source_flow_display_name,
     execution_sequence[SAFE_OFFSET(0)].page_id AS source_page_id,
@@ -247,7 +249,7 @@ WITH
   alternative_matched_intents AS (
   SELECT
     session_id,
-    position,
+    response_id,
     ARRAY_AGG( STRUCT( JSON_VALUE(alternative_matched_intent,'$.DisplayName') AS alternative_matched_intent,
         SAFE_CAST(JSON_VALUE(alternative_matched_intent,'$.Score') AS NUMERIC) AS score )
     ORDER BY
@@ -266,8 +268,8 @@ WITH
   actions AS (
     SELECT
       session_id,
-      position,
-      ROW_NUMBER() OVER (PARTITION BY session_id, position ORDER BY action_step ASC ) as action_step,
+      response_id,
+      ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY action_step ASC ) as action_step,
       CASE 
         WHEN JSON_EXTRACT(action,'$.toolUse') IS NOT NULL THEN 'toolUse'
         WHEN JSON_EXTRACT(action,'$.playbookInvocation') IS NOT NULL THEN 'playbookInvocation'
@@ -298,7 +300,7 @@ WITH
   actions_agg AS (
     SELECT 
       session_id,
-      position,
+      response_id,
       ARRAY_AGG(
         STRUCT(
           action_step,
@@ -315,7 +317,7 @@ WITH
   playbooks AS (
     SELECT
       session_id,
-      position,
+      response_id,
       playbook_step,
       ARRAY_REVERSE(SPLIT(JSON_VALUE(current_playbook,'$'),'/'))[SAFE_OFFSET(0)] AS playbook_id,
       COALESCE(action_id_decoder.action_name) AS playbook_name
@@ -329,7 +331,7 @@ WITH
   playbooks_agg AS (
   SELECT
     session_id,
-    position,
+    response_id,
     ARRAY_AGG(STRUCT(playbook_step,playbook_id,playbook_name )) AS playbooks
   FROM
     playbooks
@@ -370,39 +372,40 @@ SELECT
   base_data.input_audio_ms,
   base_data.output_audio_ms,
   actions_agg.actions,
-  playbooks_agg.playbooks
+  playbooks_agg.playbooks,
+  base_data.response_messages as response_messages
 FROM
   base_data
 LEFT JOIN
   execution_sequence_agg
 USING
   (session_id,
-    position)
+    response_id)
 LEFT JOIN
   webhook_agg
 USING
   (session_id,
-    position)
+    response_id)
 LEFT JOIN
   source_and_target_page
 USING
   (session_id,
-    position)
+    response_id)
 LEFT JOIN
   alternative_matched_intents
 USING
   (session_id,
-    position)
+    response_id)
 LEFT JOIN
   actions_agg
 USING
   (session_id,
-    position)
+    response_id)
 LEFT JOIN
   playbooks_agg
 USING
   (session_id,
-    position)
+    response_id)
 
 pre_operations {
   DECLARE

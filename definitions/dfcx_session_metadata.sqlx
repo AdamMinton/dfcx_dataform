@@ -1,118 +1,79 @@
 config {
-    type: "table",
+    type: "incremental",
     bigquery: {
-        partitionBy: "DATE(session_start_time)"
+      partitionBy: "TIMESTAMP_TRUNC(session_start_time, HOUR)",
+      updatePartitionFilter: "session_start_time >= TIMESTAMP_SUB(session_start_time_checkpoint, INTERVAL 1 HOUR)",
+      requirePartitionFilter : true
     },
+    uniqueKey: ["session_id"],
     description: "DFCX session summary information",
 }
 
 WITH
-  log_info AS (
-  SELECT
-    conversation.session_id,
-    conversation.project_id,
-    conversation.session_start_time,
-    MAX(conversation.request_time) as session_end_time,
-    MAX(parameters.att_call_id) AS att_call_id,
-    MAX(verint_id) AS verint_id,
-    COUNT(*) AS number_of_turns,
-    MAX(
-    IF
-      (project_id LIKE '%chat%',NULLIF( TRIM( REPLACE( JSON_VALUE(session_parameters,'$.userAgentHeader'), 'Google-Dialogflow-', '')), ''),'VOICE')) AS channel
-    -- , max(case when project_id like '%voice%' then 'VOICE'
-    --         else
-    --         replace((SELECT nullif(trim(parameter_fields.value.string_value),'')
-    --         FROM UNNEST(conversation.params_struct.fields) as parameter_fields
-    --         WHERE parameter_fields.key = 'userAgentHeader'),'Google-Dialogflow-','')
-    --       end) as channel
-  FROM
-    ${ref("dfcx_transcript")} AS conversation
-  INNER JOIN
-    ${ref("dfcx_transcript_parameters")} AS parameters
-  USING
-    (session_id,
-      position,
-      request_time)
-  WHERE
-    TRUE
-  GROUP BY
-    1,
-    2,
-    3 ),
-  language_code AS (
+  dfcx_transcript AS (
   SELECT
     session_id,
-  IF
-    (last_intent_display_name = 'req_spanish','es-us',final_language_code) AS final_language_code
-  FROM (
-    SELECT
+    project_id,
+    agent_id,
+    location,
+    session_start_time,
+    request_time,
+    language_code,
+    position,
+    insert_time
+  FROM
+    ${ref("dfcx_transcript")} AS dfcx_transcript
+  WHERE TRUE
+    AND dfcx_transcript.session_start_time >= session_start_time_checkpoint
+  ),
+  session_info as (
+    SELECT 
       session_id,
-      LAST_VALUE(
-      IF
-        (LOWER(TRIM(language_code)) = 'en','en-us',COALESCE(NULLIF(LOWER(TRIM(language_code)),''),'en-us')) ) OVER (PARTITION BY session_id ORDER BY position ASC RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_language_code,
-      LAST_VALUE(intent_display_name) OVER (PARTITION BY session_id ORDER BY position ASC RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS last_intent_display_name
-    FROM
-      ${ref("dfcx_transcript")}
-    WHERE
-      TRUE
-      AND (NULLIF(TRIM(event),'') <> 'Hangup'
-        OR NULLIF(TRIM(event),'') IS NULL) )
-  GROUP BY
-    1,
-    2 ),
-  webhook AS (
-  SELECT
+      project_id,
+      agent_id,
+      location,
+      session_start_time,
+      MAX(request_time) as session_end_time,
+      COUNT(*) AS number_of_turns,
+      MAX(position) as exit_position,
+      MAX(insert_time) as latest_insert_time
+    FROM dfcx_transcript
+    GROUP BY 1,2,3,4,5
+  ),
+  language_code AS (
+  SELECT session_id, MAX(final_language_code) as final_language_code
+  FROM (
+  SELECT 
     session_id,
-    MAX(CASE
-        WHEN webhook_status <> 'OK' THEN TRUE
-      ELSE
-      FALSE
-    END
-      ) AS flag_failed_webhook
-  FROM
-    ${ref("dfcx_transcript")},
-    UNNEST(webhooks) AS webhook
-  WHERE
-    TRUE
-    AND webhook_status IS NOT NULL
-  GROUP BY
-    1 ),
-  DATA AS (
+    LAST_VALUE(language_code) OVER (PARTITION BY session_id ORDER BY position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_language_code
+  FROM dfcx_transcript
+  )
+  WHERE TRUE
+  GROUP BY 1
+  ),
+  dfcx_interaction AS (
   SELECT
     session_id,
     interaction_position,
     interaction_position_reverse,
     interaction_head_intent,
-    interaction_provided_product_line,
-    interaction_products_on_id,
     start_interaction_position,
     end_interaction_position,
-    (
-    SELECT
-      MAX(action_started)
-    FROM
-      UNNEST(actions)
-    WHERE
-      primary_action = TRUE) AS any_started_action,
+    (SELECT MAX(action_started) FROM UNNEST(actions) WHERE primary_action = TRUE) AS any_started_action,
     LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) AS lag_01_interaction_head_intent,
-  IF
-    (LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) = interaction_head_intent, FALSE, TRUE) AS change_from_previous_head_intent,
+    IF(LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) = interaction_head_intent, FALSE, TRUE) AS change_from_previous_head_intent,
     final_message,
-    actions,
-    LAST_VALUE(interaction_provided_product_line IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY interaction_position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_interaction_provided_product_line,
-    LAST_VALUE(interaction_products_on_id IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY interaction_position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_interaction_products_on_id,
-    LAST_VALUE(interaction_consolidated_product IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY interaction_position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_interaction_consolidated_product
+    actions
   FROM
-    ${ref("dfcx_interaction")}
-  WHERE
-    TRUE ),
+    ${ref("dfcx_interaction")} as dfcx_interaction
+  WHERE TRUE
+    AND dfcx_interaction.session_start_time >= session_start_time_checkpoint
+  ),
   removing_non_unique AS (
   SELECT
     session_id,
     interaction_position,
     interaction_head_intent,
-    interaction_provided_product_line,
-    interaction_products_on_id,
     actions.*,
     ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY primary_action DESC
       --primary actions first
@@ -122,7 +83,7 @@ WITH
       --latest action started
       ) AS ranking
   FROM
-    DATA,
+    dfcx_interaction,
     UNNEST(actions) AS actions
   WHERE
     any_started_action = TRUE
@@ -132,8 +93,6 @@ WITH
     session_id,
     interaction_position,
     interaction_head_intent,
-    interaction_provided_product_line,
-    interaction_products_on_id,
     actions.*,
     ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY primary_action DESC
       --primary actions first
@@ -143,7 +102,7 @@ WITH
       --latest action started
       ) AS ranking
   FROM
-    DATA,
+    dfcx_interaction,
     UNNEST(actions) AS actions
   WHERE
     session_id NOT IN (
@@ -154,20 +113,14 @@ WITH
   final_message AS (
   SELECT
     session_id,
-    final_message,
-    final_interaction_provided_product_line,
-    final_interaction_products_on_id,
-    final_interaction_consolidated_product
-  FROM
-    DATA
+    final_message
+  FROM dfcx_interaction
   WHERE
     interaction_position_reverse = 1 ),
   union_actions AS (
   SELECT
     session_id,
     COALESCE(interaction_head_intent,'Unidentified') AS final_interaction_head_intent,
-    interaction_provided_product_line,
-    interaction_products_on_id,
     action,
     action_started,
     action_started_position,
@@ -182,8 +135,6 @@ WITH
   SELECT
     session_id,
     COALESCE(interaction_head_intent,'Unidentified') AS final_interaction_head_intent,
-    interaction_provided_product_line,
-    interaction_products_on_id,
     'NO SELF SERVICE' AS action,
     action_started,
     action_started_position,
@@ -195,51 +146,41 @@ WITH
   WHERE
     ranking = 1 )
 SELECT
-  log_info.session_id,
-  log_info.project_id,
-  log_info.att_call_id,
-  log_info.verint_id,
-  log_info.session_start_time,
-  log_info.session_end_time,
-  webhook.flag_failed_webhook,
-  CASE
-    WHEN log_info.verint_id IS NOT NULL THEN TRUE
-  ELSE
-  FALSE
-END
-  AS is_call_recorded,
+  session_info.session_start_time,
+  session_info.session_id,
+  session_info.project_id,
+  session_info.agent_id,
+  session_info.location,
+  session_info.session_end_time,
   final_message.final_message,
   union_actions.final_interaction_head_intent,
-  final_message.final_interaction_provided_product_line AS interaction_provided_product_line,
-  final_message.final_interaction_products_on_id AS interaction_products_on_id,
   union_actions.action AS final_action,
   union_actions.action_started AS final_action_started,
   union_actions.action_ended AS final_action_ended,
-  intent_info.pod AS final_interaction_head_intent_pod,
   union_actions.primary_flow AS final_action_primary_flow,
-  log_info.number_of_turns,
+  session_info.number_of_turns,
   COALESCE(language_code.final_language_code,'en-us') AS final_language_code,
-  final_message.final_interaction_consolidated_product,
-  log_info.channel
-FROM
-  log_info
-LEFT JOIN
-  webhook
-ON
-  log_info.session_id = webhook.session_id
-LEFT JOIN
-  final_message
-ON
-  log_info.session_id = final_message.session_id
-LEFT JOIN
-  union_actions
-ON
-  log_info.session_id = union_actions.session_id
-LEFT JOIN
-  user_defined_data.dfcx_intent AS intent_info
-ON
-  union_actions.final_interaction_head_intent = intent_info.dfcx_intent_name
-LEFT JOIN
-  language_code
-ON
-  log_info.session_id = language_code.session_id
+  session_info.latest_insert_time
+FROM session_info
+LEFT JOIN final_message USING (session_id)
+LEFT JOIN union_actions USING (session_id)
+LEFT JOIN language_code USING (session_id)
+
+pre_operations {
+  DECLARE
+    insert_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MAX(latest_insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
+            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
+    }
+    );
+  DECLARE 
+    session_start_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 36 HOUR) AND insert_time > insert_time_checkpoint`,
+            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
+    }
+    )
+}

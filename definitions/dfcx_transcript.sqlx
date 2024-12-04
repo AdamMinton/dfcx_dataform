@@ -1,56 +1,53 @@
 config {
     type: "incremental",
     bigquery: {
-        partitionBy: "DATE(session_start_time)",
-        updatePartitionFilter: "session_start_time >= timestamp_sub(request_time_checkpoint, interval 3 hour)"
+        partitionBy: "TIMESTAMP_TRUNC(session_start_time, HOUR)",
+        requirePartitionFilter : true
     },
-    uniqueKey: ["session_id", "position"],
     description: "Main reporting table for DFCX conversations",
 }
 
 WITH
   base_data AS (
   SELECT
-    dfcx_position.session_start_time as session_start_time,
+    dfcx_position.session_start_time,
     dfcx.project_id AS project_id,
     SPLIT(dfcx.conversation_name,'/')[SAFE_OFFSET(3)] AS location,
     dfcx.agent_id AS agent_id,
     ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] AS session_id,
+    dfcx_position.position AS position,
     JSON_VALUE(dfcx.response,'$.responseId') AS response_id,
     dfcx.request_time AS request_time,
-    dfcx_position.position AS position,
+    dfcx.insert_time as insert_time,
     JSON_VALUE(dfcx.request,'$.queryInput.text.text') AS user_utterance,
     JSON_VALUE(dfcx.request,'$.queryInput.dtmf.digits') AS optional_dtmf_digits,
     ARRAY_REVERSE(SPLIT(JSON_VALUE(dfcx.response,'$.queryResult.intent.name'),'/'))[SAFE_OFFSET(0)] AS intent_display_id,
     JSON_VALUE(dfcx.response,'$.queryResult.intent.displayName') AS intent_display_name,
     JSON_VALUE(dfcx.response,'$.queryResult.match.matchType') AS match_type,
     CAST(JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') AS FLOAT64) AS intent_confidence_score,
-    TO_JSON(COALESCE(JSON_QUERY(dfcx.response,'$.queryResult.parameters'),JSON_OBJECT())) AS session_parameters,
+    JSON_QUERY(dfcx.response,'$.queryResult.parameters') AS session_parameters,
     JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Execution Sequence') AS execution_sequence,
     dfcx.language_code,
     JSON_VALUE(dfcx.request,'$.queryInput.event.event') AS event,
     JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.responseMessages') AS response_messages,
     JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Alternative Matched Intents') AS alternative_matched_intents,
+    JSON_VALUE(dfcx.derived_data,'$.agentUtterances') as agent_response,
+    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.actionTracingInfo.actions') as actions,
+    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.currentPlaybooks') as current_playbooks,
+    JSON_QUERY(dfcx.response,'$.queryResult.match.knowledgeConnectorAnswer') as knowledge_connector_answer,
     derived_data.v3SessionLatencies.executionStepDurations AS execution_steps_durations,
+    JSON_VALUE(dfcx.derived_data,'$.speechRecognitionConfig.model') AS speech_recognition_model,
     COALESCE(SAFE_DIVIDE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.inputAudioDuration.nanos') AS INT64),1000000),0) 
       + COALESCE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.inputAudioDuration.seconds') AS INT64) * 1000,0) AS input_audio_ms,
     COALESCE(SAFE_DIVIDE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.outputAudioDuration.nanos') AS INT64),1000000),0) 
       + COALESCE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.outputAudioDuration.seconds') AS INT64) * 1000,0) AS output_audio_ms,
-    JSON_VALUE(dfcx.derived_data,'$.agentUtterances') as agent_response,
-    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.actionTracingInfo.actions') as actions,
-    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.currentPlaybooks') as current_playbooks
-  FROM
-    `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` AS dfcx
-  INNER JOIN
-    ${ref("dfcx_transcript_position")} as dfcx_position
-  ON
-    ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] = dfcx_position.session_id
-    AND dfcx.request_time = dfcx_position.request_time
-    AND dfcx_position.session_start_time >= request_time_checkpoint
-  WHERE
-    TRUE
-    AND DATE(_PARTITIONTIME) >= DATE(request_time_checkpoint)
-    AND dfcx.request_time > TIMESTAMP_SUB(request_time_checkpoint, INTERVAL 2 HOUR)
+  FROM `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` AS dfcx
+    INNER JOIN ${ref("dfcx_transcript_position")} as dfcx_position
+        ON ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] = dfcx_position.session_id
+        AND dfcx.request_time = dfcx_position.request_time
+  WHERE TRUE
+    AND dfcx.insert_time > insert_time_checkpoint
+    AND dfcx_position.insert_time > insert_time_checkpoint
   QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY request_time DESC) = 1
   ),
   execution_sequence AS (
@@ -373,7 +370,8 @@ SELECT
   base_data.output_audio_ms,
   actions_agg.actions,
   playbooks_agg.playbooks,
-  base_data.response_messages as response_messages
+  base_data.response_messages as response_messages,
+  base_data.insert_time
 FROM
   base_data
 LEFT JOIN
@@ -409,11 +407,11 @@ USING
 
 pre_operations {
   DECLARE
-    request_time_checkpoint DEFAULT (
+    insert_time_checkpoint DEFAULT (
     ${
         when(incremental(),
-            `SELECT MAX(request_time) FROM ${self()}`,
-            `SELECT TIMESTAMP('2000-01-01')`)
+            `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
+            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
     }
     );
 }

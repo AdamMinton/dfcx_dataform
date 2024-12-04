@@ -1,8 +1,11 @@
 config {
-    type: "table",
+    type: "incremental",
     bigquery: {
-        partitionBy: "DATE(session_start_time)"
+        partitionBy: "TIMESTAMP_TRUNC(session_start_time, HOUR)",
+        updatePartitionFilter: "session_start_time >= timestamp_sub(session_start_time_checkpoint, interval 1 hour)",
+        requirePartitionFilter : true
     },
+    uniqueKey: ["session_id", "response_id"],
     description: "DFCX transition information",
 }
 
@@ -18,10 +21,10 @@ WITH
     END
       ) AS has_webhook_failure
   FROM
-    ${ref("dfcx_transcript")},
+    ${ref("dfcx_transcript")} as dfcx_transcript,
     UNNEST(webhooks) AS webhook
-  WHERE
-    TRUE
+  WHERE TRUE
+    AND dfcx_transcript.session_start_time >= session_start_time_checkpoint
   GROUP BY
     1,
     2 ),
@@ -31,6 +34,8 @@ WITH
     MAX(position) AS last_position
   FROM
     ${ref("dfcx_transcript")} AS turns
+  WHERE TRUE
+    AND turns.session_start_time >= session_start_time_checkpoint
   GROUP BY
     session_id ),
   transitions AS (
@@ -40,7 +45,6 @@ WITH
     turns.location,
     turns.agent_id,
     turns.session_id,
-    conversation.att_call_id,
     interaction.interaction_head_intent,
     turns.source_flow_id AS flow_id_before,
     turns.flow_id AS flow_id_after,
@@ -54,10 +58,10 @@ WITH
       ) AS page_after,
     LAG(turns.position) OVER (PARTITION BY turns.session_id ORDER BY turns.position) AS position_before,
     turns.position AS position_after,
-    LAG(transcript.consolidated_agent_response) OVER (PARTITION BY turns.session_id ORDER BY turns.position) AS agent_response_before,
-    transcript.consolidated_agent_response AS agent_response_after,
+    LAG(turns.agent_response) OVER (PARTITION BY turns.session_id ORDER BY turns.position) AS agent_response_before,
+    turns.agent_response AS agent_response_after,
     transcript.consolidated_user_utterance AS user_utterance,
-    transcript.match_type,
+    turns.match_type,
     (
       CASE
         WHEN TRIM(turns.intent_display_name) != '' THEN turns.intent_display_name
@@ -72,11 +76,12 @@ WITH
     (turns.intent_display_name LIKE '%req_agent%'
       AND turns.page_display_name = 'End Session') AS has_req_agent_plus_escalation,
     webhook_failures.has_webhook_failure,
-    (transcript.match_type = 'NO_MATCH') AS has_no_match,
-    (transcript.match_type = 'NO_INPUT') AS has_no_input,
+    (turns.match_type = 'NO_MATCH') AS has_no_match,
+    (turns.match_type = 'NO_INPUT') AS has_no_input,
     turns.language_code,
     turns.source_flow_display_name AS flow_before,
     turns.flow_display_name AS flow_after,
+    turns.insert_time
   FROM
     ${ref("dfcx_transcript")} AS turns
   LEFT JOIN
@@ -106,16 +111,21 @@ WITH
     ${ref("dfcx_transcript_metadata")} AS transcript
   ON
     turns.session_id = transcript.session_id
-    AND turns.position = transcript.position
+    AND turns.response_id = transcript.response_id
   WHERE
-    TRUE )
+    TRUE 
+    AND turns.session_start_time >= session_start_time_checkpoint
+    AND conversation.session_start_time >= session_start_time_checkpoint
+    AND interaction.session_start_time >= session_start_time_checkpoint
+    AND heuristic_outcome.session_start_time >= session_start_time_checkpoint
+    AND transcript.session_start_time >= session_start_time_checkpoint
+)
 SELECT
   transitions.session_start_time,
   transitions.project_id,
   transitions.location,
   transitions.agent_id,
   transitions.session_id,
-  transitions.att_call_id,
   transitions.interaction_head_intent,
   transitions.flow_before,
   transitions.flow_after,
@@ -136,8 +146,28 @@ SELECT
   transitions.has_webhook_failure,
   transitions.has_no_match,
   transitions.has_no_input,
-  transitions.language_code
+  transitions.language_code,
+  transitions.insert_time
 FROM
   transitions
-WHERE
-  user_utterance NOT LIKE 'projects/%'
+WHERE TRUE
+  AND position_before is not null
+
+pre_operations {
+  DECLARE
+    insert_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
+            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
+    }
+    );
+  DECLARE 
+    session_start_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 36 HOUR) AND insert_time > insert_time_checkpoint`,
+            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
+    }
+    )
+}

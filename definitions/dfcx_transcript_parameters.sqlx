@@ -1,8 +1,8 @@
 config {
-    type: "view",
-    assertions: {
-        uniqueKey: ["session_id", "position"],
-        nonNull: ["session_id", "position"]
+    type: "incremental",
+    bigquery: {
+        partitionBy: "TIMESTAMP_TRUNC(session_start_time, HOUR)",
+        requirePartitionFilter : true
     },
     description: "Session Parameters of DFCX conversations",
 }
@@ -10,29 +10,30 @@ config {
 SELECT
   session_start_time,
   session_id,
-  position,
-  request_time,
-  JSON_VALUE(session_parameters,'$.AAMIntentFromGDF') AS aam_intent_from_gdf,
-  JSON_VALUE(session_parameters,'$.status') AS status,
-  JSON_VALUE(session_parameters,'$.head_intent') AS head_intent,
-  JSON_VALUE(session_parameters,'$.VerintID') AS verint_id,
-  JSON_VALUE(session_parameters,'$.ProvidedIDMatchedToBill') AS provided_id_matched_to_bill,
-  JSON_VALUE(session_parameters,'$.providedIntent') AS provided_intent,
-  JSON_VALUE(session_parameters,'$.providedid') AS provided_id,
-  JSON_VALUE(session_parameters,'$.BC_version') AS bc_version,
-  JSON_VALUE(session_parameters,'$.pendingadjustment') AS pending_adjustment,
-  COALESCE( JSON_VALUE(session_parameters,'$.avaya-session-telephone.ContextID'),JSON_VALUE(session_parameters,'$.conversationId') ) AS att_call_id,
-  JSON_VALUE(session_parameters,'$.avaya-session-telephone.dnis') AS att_call_dnis,
-  JSON_VALUE(session_parameters,'$.avaya-session-telephone.handoffTarget') AS att_call_handoff_target,
-  JSON_VALUE_ARRAY(session_parameters,'$.providedproductline') AS provided_product_line,
-  JSON_VALUE_ARRAY(session_parameters,'$.productsOnID.value') AS products_on_id,
-  JSON_VALUE_ARRAY(session_parameters,'$.BillsOnID.value') AS bills_on_id,
-  JSON_VALUE(session_parameters,'$.input_from_ivrcs.DNISCategory') AS dnis_category,
-  JSON_VALUE(session_parameters,'$.input_from_ivrcs.ANI') AS ani,
-  COALESCE( JSON_VALUE(session_parameters,'$.AdjustmentList'),JSON_VALUE(session_parameters,'$.adjustmentlist') ) AS adjustment_list,
-  JSON_VALUE_ARRAY(session_parameters,'$.pendingadjustmentdescription') AS pending_adjustment_description,
-  JSON_VALUE_ARRAY(session_parameters,'$.PendingCreditAdjustmentDescriptionForVoice') AS pending_adjustment_description_for_voice
+  response_id,
+  insert_time,
+  JSON_VALUE(session_parameters,'$.test') AS test
 FROM
   ${ref("dfcx_transcript")}
-WHERE
-  TRUE
+WHERE TRUE
+  AND insert_time > insert_time_checkpoint
+  AND session_start_time >= session_start_time_checkpoint
+
+pre_operations {
+  DECLARE
+    insert_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
+            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
+    }
+    );
+  DECLARE 
+    session_start_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 36 HOUR) AND insert_time > insert_time_checkpoint`,
+            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
+    }
+    )
+}

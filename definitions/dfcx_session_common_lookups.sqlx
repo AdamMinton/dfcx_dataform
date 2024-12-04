@@ -1,66 +1,43 @@
 config {
-    type: "table",
+    type: "incremental",
     bigquery: {
-        partitionBy: "DATE(session_start_time)"
+      partitionBy: "TIMESTAMP_TRUNC(session_start_time, HOUR)",
+      updatePartitionFilter: "session_start_time >= TIMESTAMP_SUB(session_start_time_checkpoint, INTERVAL 1 HOUR)",
+      requirePartitionFilter : true
     },
-    assertions: {
-        uniqueKey: ["session_id"],
-        nonNull: ["session_id"]
-    },
+    uniqueKey: ["session_id"],
     description: "DFCX session lookup information",
 }
 
-WITH
-  conversation AS (
-  SELECT
-    project_id,
-    location,
-    agent_id,
-    session_id,
-    session_start_time
-  FROM
-    ${ref("dfcx_transcript")}
-  GROUP BY
-    1,
-    2,
-    3,
-    4,
-    5 ),
-  prep AS (
-  SELECT
-    conversation.session_start_time,
-    conversation.project_id,
-    conversation.location,
-    conversation.agent_id,
-    conversation.session_id,
-    conversation_info.att_call_id,
-    conversation_info.final_interaction_head_intent,
-    is_call_recorded,
-    CONCAT( 'https://dialogflow.cloud.google.com/cobweb/logs/', conversation.session_id, '?name=projects%2F', conversation.project_id, '%2Flocations%2F', conversation.location, '%2Fagents%2F', conversation.agent_id ) AS cobweb_url,
-    CONCAT( 'https://pantheon.corp.google.com/logs/query;', 'query=resource.type%3D%22global%22%0Aresource.labels.project_id%3D%22', conversation.project_id, '%22%0Alabels.session_id%3D%22', conversation.session_id, '%22;', 'timeRange=', FORMAT_DATETIME( '%Y-%m-%dT%H:%M:%S.000Z', DATETIME(conversation_info.session_start_time, 'UTC')), '%2F', FORMAT_DATETIME( '%Y-%m-%dT%H:%M:%S.000Z', DATETIME(conversation_info.session_start_time, 'UTC')), '--PT15M;', '?', 'project=', conversation.project_id) AS logs_explorer_url,
-    CONCAT( 'https://dialogflow.cloud.google.com/cx/projects/',conversation.project_id,'/locations/',conversation.location,'/agents/',conversation.agent_id,'/conversations/',conversation.session_id) AS dfcx_url,
-    CONCAT( 'https://lookerstudio.google.com/c/u/{{AUTH_USER}}/reporting/543e2147-9bf4-41e6-b527-a66f86df5d40/page/9n0eD?params=','%7B%22ds0.AUTH_USER%22%3A%22{{AUTH_USER}}%22%2C%22ds0.SESSION_DATE%22%3A%22',FORMAT_TIMESTAMP('%Y-%m-%d', conversation.session_start_time),'%22%2C%22ds0.SESSION_ID%22%3A%22',conversation.session_id,'%22%7D') as transcript_explorer_url
-  FROM
-    conversation
-  LEFT JOIN
-    ${ref("dfcx_session_metadata")} AS conversation_info
-  ON
-    conversation.session_id = conversation_info.session_id
-  WHERE
-    1=1
-  GROUP BY
-    1,
-    2,
-    3,
-    4,
-    5,
-    6,
-    7,
-    8,
-    9,
-    10,
-    11 )
 SELECT
-  *
-FROM
-  prep
+  session_start_time,
+  session_id,
+  project_id,
+  location,
+  agent_id,
+  final_interaction_head_intent,
+  latest_insert_time,
+  CONCAT( 'https://console.cloud.google.com/logs/query;', 'query=resource.type%3D%22global%22%0Aresource.labels.project_id%3D%22', project_id, '%22%0Alabels.session_id%3D%22', session_id, '%22;', 'timeRange=', FORMAT_DATETIME( '%Y-%m-%dT%H:%M:%S.000Z', DATETIME(session_start_time, 'UTC')), '%2F', FORMAT_DATETIME( '%Y-%m-%dT%H:%M:%S.000Z', DATETIME(session_start_time, 'UTC')), '--PT15M;', '?', 'project=', project_id) AS logs_explorer_url,
+  CONCAT( 'https://dialogflow.cloud.google.com/cx/projects/',project_id,'/locations/',location,'/agents/',agent_id,'/conversations/',session_id) AS dfcx_url,
+FROM ${ref("dfcx_session_metadata")} AS dfcx_session_metadata
+WHERE TRUE
+  AND session_start_time >= session_start_time_checkpoint
+
+pre_operations {
+  DECLARE
+    insert_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MAX(latest_insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
+            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
+    }
+    );
+  DECLARE 
+    session_start_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 36 HOUR) AND insert_time > insert_time_checkpoint`,
+            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
+    }
+    )
+}

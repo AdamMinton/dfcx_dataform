@@ -1,12 +1,12 @@
 {
-  "defaultSchema": "dataform",
+  "defaultSchema": "dataform_ccai",
   "assertionSchema": "dataform_assertions",
   "warehouse": "bigquery",
   "defaultDatabase": "whisper-test-378918",
   "defaultLocation": "US",
-  "schemaSuffix": "ccai_development",
+  "schemaSuffix": "development",
   "vars": {
     "dialogflowExport":"insights_demo.dialogflow_bigquery_export_data",
-    "cloudStorageDialogflowExport":"cloud_storage.dfcx_logs_test_3"
+    "backfillDate": "DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH), MONTH)"
   }
 }

@@ -1,0 +1,9 @@
+defaultProject: whisper-test-378918
+defaultLocation: US
+defaultDataset: dataform_ccai
+defaultAssertionDataset: dataform_assertions
+dataformCoreVersion: 3.0.0-beta.4
+datasetSuffix: development
+vars:
+  dialogflowExport: insights_demo.dialogflow_bigquery_export_data
+  backfillDate: DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH), MONTH)

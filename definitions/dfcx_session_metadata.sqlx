@@ -19,6 +19,7 @@ WITH
     session_start_time,
     request_time,
     language_code,
+    LAST_VALUE(language_code) OVER (PARTITION BY session_id ORDER BY position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_language_code,
     position,
     insert_time
   FROM
@@ -36,20 +37,10 @@ WITH
       MAX(request_time) as session_end_time,
       COUNT(*) AS number_of_turns,
       MAX(position) as exit_position,
+      COALESCE(MAX(final_language_code),'en-us') as final_language_code,
       MAX(insert_time) as latest_insert_time
     FROM dfcx_transcript
     GROUP BY 1,2,3,4,5
-  ),
-  language_code AS (
-  SELECT session_id, MAX(final_language_code) as final_language_code
-  FROM (
-  SELECT 
-    session_id,
-    LAST_VALUE(language_code) OVER (PARTITION BY session_id ORDER BY position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_language_code
-  FROM dfcx_transcript
-  )
-  WHERE TRUE
-  GROUP BY 1
   ),
   dfcx_interaction AS (
   SELECT
@@ -159,12 +150,11 @@ SELECT
   union_actions.action_ended AS final_action_ended,
   union_actions.primary_flow AS final_action_primary_flow,
   session_info.number_of_turns,
-  COALESCE(language_code.final_language_code,'en-us') AS final_language_code,
+  session_info.final_language_code,
   session_info.latest_insert_time
 FROM session_info
 LEFT JOIN final_message USING (session_id)
 LEFT JOIN union_actions USING (session_id)
-LEFT JOIN language_code USING (session_id)
 
 pre_operations {
   DECLARE

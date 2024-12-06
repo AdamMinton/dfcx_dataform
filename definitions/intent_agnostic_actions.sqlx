@@ -1,0 +1,6 @@
+config {
+    type: "table",
+    description: "Intent Agnostic Actions metadata for start and success",
+}
+
+SELECT 'Test' as primary_flow, 'Test' as start_flow, 'Test' as start_page, 'Test' as end_flow, 'Test' as end_page, 'TEST' as action, 'BEHAVIOR' as action_type, 'SUCCESS' as outcome, FALSE as primary_action, 'VOICE' as channel, DATE('2000-01-01') as valid_from, DATE('2050-01-01') as valid_to

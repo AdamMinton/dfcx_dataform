@@ -1,0 +1,6 @@
+config {
+    type: "table",
+    description: "Intent Specific Actions metadata for start and success",
+}
+
+SELECT 'Default Welcome Intent' as head_intent, 'Default Start Flow' as primary_flow, 'Default Start Flow' as start_flow, 'Start page' as start_page, 'Default Start Flow' as end_flow, 'Start Page' as end_page, 'DEFAULT' as action, 'SELF_SERVICE' as action_type, 'SUCCESS' as outcome, TRUE as primary_action, 'VOICE' as channel, DATE('2000-01-01') as valid_from, DATE('2050-01-01') as valid_to

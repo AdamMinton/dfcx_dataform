@@ -147,8 +147,7 @@ actions_to_check AS (
     primary_action,
     valid_from,
     valid_to
-  FROM
-    user_defined_data.intent_specific_actions
+  FROM ${ref("intent_specific_actions")}
   WHERE
     start_page IS NOT NULL
     AND end_page IS NOT NULL
@@ -171,9 +170,8 @@ actions_to_check AS (
       DISTINCT interaction_head_intent
     FROM
       interaction_information) AS a
-  CROSS JOIN
-    user_defined_data.intent_agnostic_actions b
-),
+  CROSS JOIN ${ref("intent_agnostic_actions")} b
+  ),
 unnest_execution_steps AS (
 SELECT
   session_start_time,

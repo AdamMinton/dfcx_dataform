@@ -19,7 +19,7 @@ WITH
     session_start_time,
     request_time,
     language_code,
-    LAST_VALUE(language_code) OVER (PARTITION BY session_id ORDER BY position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_language_code,
+    LAST_VALUE(language_code IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY request_time ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_language_code,
     position,
     insert_time
   FROM

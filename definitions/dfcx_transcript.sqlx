@@ -629,7 +629,7 @@ pre_operations {
     );
 
 CREATE TEMP FUNCTION extract_matched_intent_parameters(jsonObject JSON)
-RETURNS ARRAY<STRUCT<parameter_key STRING, original STRING, resolved ARRAY<STRING>, type STRING>>
+RETURNS ARRAY<STRUCT<session_parameter STRING, original STRING, resolved ARRAY<STRING>, type STRING>>
 LANGUAGE js AS """
   try {
     if (!jsonObject || !jsonObject.Parameters) {
@@ -656,7 +656,7 @@ LANGUAGE js AS """
         }
 
         result.push({
-          parameter_key: key,
+          session_parameter: key,
           original: param.original ? param.original.toString() : '',
           resolved: resolvedArray,
           type: param.type ? param.type.toString() : ''

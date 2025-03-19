@@ -39,7 +39,7 @@ config {
           session_parameter: "The name of the session parameter used to capture the user's matched intent",
           original: "The original text value of the matched intent parameter as provided by the user",
           resolved: "The resolved or normalized value of the matched intent parameter",
-          type: "The entity type from Dialogflow"
+          entity_type: "The entity type from Dialogflow"
         }
       },
       execution_sequence: {
@@ -531,7 +531,7 @@ pre_operations {
     );
 
   CREATE TEMP FUNCTION extract_matched_intent_parameters(jsonObject JSON)
-  RETURNS ARRAY<STRUCT<session_parameter STRING, original STRING, resolved ARRAY<STRING>, type STRING>>
+  RETURNS ARRAY<STRUCT<session_parameter STRING, original STRING, resolved ARRAY<STRING>, entity_type STRING>>
   LANGUAGE js AS """
     try {
       if (!jsonObject || !jsonObject.Parameters) {
@@ -561,7 +561,7 @@ pre_operations {
             session_parameter: key,
             original: param.original ? param.original.toString() : '',
             resolved: resolvedArray,
-            type: param.type ? param.type.toString() : ''
+            entity_type: param.type && param.type.toString().trim() !== '' ? param.type.toString() : null
           });
         }
       }

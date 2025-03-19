@@ -6,129 +6,131 @@ config {
     },
     description: "Main reporting table for DFCX conversations",
     columns: {
-        project_id: "The GCP project ID",
-        location: "The GCP project location",
-        agent_id: "The user-provided identifier for the agent who handled the conversation.",
-        session_id: "The fully qualified unique ID for the session",
-        session_start_time: "The time at which a session starts",
-        response_id: "The unique ID associated with the response from the agent",
-        request_time: "The time of the conversational turn",
-        position: "The conversational turn number",
-        user_utterance: "The turn level user's utterance with the agent",
-        optional_dtmf_digits: "The turn level user's input on phone key pad",
-        agent_response: "The agent's response to user utterance at turn level for a particular conversation",
-        source_flow_id: "The unique ID of the matched source flow at every turn in the conversation",
-        source_flow_display_name: "The human readable name of the source flow at every turn in the conversation",
-        source_page_id: "The unique ID of the matched source page at every turn in the conversation",
-        source_page_display_name: "The human readable name of the source page at every turn in the conversation",
-        flow_id: "The unique ID of the matched flow",
-        flow_display_name: "The human readable name of the flow",
-        page_id: "The unique ID of the matched page",
-        page_display_name: "The human readable name of the page",
-        intent_display_id: "The unique ID of the matched intent",
-        intent_display_name: "The human readable name of the matched intent",
-        intent_confidence_score: "The magnitude of the matched intent score in the scale of 0-1",
-        match_type: "The intent or playbook match associated with user utterance",
-        event: "The trigger based on a specific action or flow in the agent based on something that happened, rather than direct user input",
-        execution_sequence_count: "The number of steps in the execution sequence",
-        language_code: "The language tag",
-        session_parameters: "The various session parameters as represented at the end of a turn",
-        execution_sequence: {
-            description: "The steps",
-            columns: {
-                step: "Refers to a single action or processing unit that occurs during a conversation turn",
-                flow_id: "The unique ID of the matched flow",
-                flow_display_name: "The human readable name of the flow",
-                page_id: "The unique ID of the matched page",
-                page_display_name: "The human readable name of the page",
-                status: "Refers to the outcome or result of a particular step",
-                session_parameters_initial: "The initial value of various session parameters used across the pages in the agent",
-                session_parameters_updated: "The updated value of various session parameters used across the pages in the agent",
-                system_function_results: "The detailed information about the evaluation of system functions within your agent",
-                responses: "The output or result that a function produces after it has been executed.",
-                matched_intent: "The human readable name of the matched intent",
-                triggered_transition_route_id: "A unique ID of the transition route on a page",
-                triggered_intent: "The intent that is triggered based on the user utterance",
-                triggered_condition: "The condition that is met based on the context & the user utterance",
-                target_flow_id: "A unique ID of the flow that is triggered based on the user utterance",
-                target_page_id: "A unique ID of the page that is triggered based on the user utterance",
-                webhook_id: "A unique ID of the triggered webhook function call",
-                webhook_display_name: "The readable name of the triggered webhook function call",
-                webhook_latency_ms: "The latency associated with a particular function call made from the agent",
-                webhook_status: "The PASS or the FAILURE status associated with a particular function call made from the agent",
-                webhook_url: "The entire URL associated with a particular function call made from the agent",
-                step_processing_ms: "Describes how long it took, in milliseconds, to process a specific step within a function.",
-            }
-        },
-        webhooks: {
-            description: "The webhook executed within a turn",
-            columns: {
-                step: "Refers to a single action or processing unit that occurs during a conversation turn",
-                flow_id: "The unique ID of the matched flow",
-                flow_display_name: "The human readable name of the flow",
-                page_id: "The unique ID of the matched pagen",
-                page_display_name: "The human readable name of the page",
-                webhook_id: "A unique ID of the triggered webhook function call",
-                webhook_display_name: "The readable name of the triggered webhook function call",
-                webhook_id: "A unique ID of the triggered webhook function call",
-                webhook_display_name: "The readable name of the triggered webhook function call",
-                webhook_latency_ms: "The latency associated with a particular function call made from the agent",
-                webhook_status: "The PASS or the FAILURE status associated with a particular function call made from the agent",
-                webhook_url: "The entire URL associated with a particular function call made from the agent",
-                session_parameters_updated: "The updated value of various session parameters used across the pages in the agent",
-            }
-        },
-        alternative_matched_intents: {
-            description: "The list of intents that are closely matched based on the user utterance",
-            columns: {
-                alternative_matched_intent: "The intent that is closely matched based on the user utterance",
-                score: "The confidence score associated with the matched intent",
-            }
-        },
-        input_audio_ms: "The user utterance voice latency",
-        output_audio_ms: "The agent utterance voice latency",
-        actions: {
-            description: "The actions performed by the generative playbook for the current turn.",
-            columns: {
-                action_step: "The order of the action",
-                action: "The type of action executed",
-                action_id: "The fully qualified unique ID for the action",
-                action_name: "The name of the action",
-                action_state: "The state of the action",
-                action_input: "The input parameters to the action",
-                action_output: "The output parameters of the action",
-            }
-        },
-        playbooks: {
-            description: "The list of playbooks used within the agent",
-            columns: {
-                playbook_step: "The order of the playbooks entered",
-                playbook_id: "The fully qualified unique ID for the triggered playbook",
-                playbook_name: "The human readable name associated with the triggered playbook",
-            }
-        },
-        response_messages: "Represents a response message that can be returned by a conversational agent",
-        citations: {
-            description: "The ordered list of citations returned from the infobot",
-            columns: {
-                title: "The title of the citation",
-                action_link: "The link of the citation",
-            }
-        },
-        playbook_metrics: {
-            description: "The key metrics associated with the overall playbooks part of the agent",
-            columns: {
-                llm_latency_ms: "The latency associated due to the payload context size associated with the playbook",
-                tool_latency_ms: "The latency due to the tools being called from the playbook",
-                total_latency_ms: "The total latency associated with a playbook call",
-                input_token_limit: "The max incoming JSON payload context size into a playbook",
-                output_token_limit: "The  max outgoing JSON payload context size from a playbook",
-                input_tokens_count: "The actual number of token numbers of incoming JSON payload into a playbook",
-                output_tokens_count: "The actual number of token numbers of outgoing JSON payload from a playbook",
-                states: "The multiple states associated with the playbook execution",
-            }
-        },
-        insert_time: "The UTC timestamp of when the record was inserted to the source table"
+      project_id: "The GCP project ID",
+      location: "The GCP project location",
+      agent_id: "The user-provided identifier for the agent who handled the conversation",
+      session_id: "The fully qualified unique ID for the session",
+      session_start_time: "The time at which a session starts",
+      response_id: "The unique ID associated with the response from the agent",
+      request_time: "The time of the conversational turn",
+      position: "The conversational turn number",
+      user_utterance: "The turn level user's utterance with the agent",
+      optional_dtmf_digits: "The turn level user's input on phone key pad",
+      agent_response: "The agent's response to user utterance at turn level for a particular conversation",
+      source_flow_id: "The unique ID of the matched source flow at every turn in the conversation",
+      source_flow_display_name: "The human readable name of the source flow at every turn in the conversation",
+      source_page_id: "The unique ID of the matched source page at every turn in the conversation",
+      source_page_display_name: "The human readable name of the source page at every turn in the conversation",
+      flow_id: "The unique ID of the matched flow",
+      flow_display_name: "The human readable name of the flow",
+      page_id: "The unique ID of the matched page",
+      page_display_name: "The human readable name of the page",
+      intent_display_id: "The unique ID of the matched intent",
+      intent_display_name: "The human readable name of the matched intent",
+      intent_confidence_score: "The magnitude of the matched intent score in the scale of 0-1",
+      match_type: "The intent or playbook match associated with user utterance",
+      event: "The trigger based on a specific action or flow in the agent based on something that happened, rather than direct user input",
+      execution_sequence_count: "The number of steps in the execution sequence",
+      language_code: "The language tag",
+      session_parameters: "The various session parameters as represented at the end of a turn",
+      matched_intent_parameters: {
+        description: "The parameters extracted from the user's matched intent",
+        columns: {
+          session_parameter: "The name of the session parameter used to capture the user's matched intent",
+          original: "The original text value of the matched intent parameter as provided by the user",
+          resolved: "The resolved or normalized value of the matched intent parameter",
+          type: "The entity type from Dialogflow"
+        }
+      },
+      execution_sequence: {
+        description: "The individual processing steps through flows and pages",
+        columns: {
+          step: "Refers to a single action or processing unit that occurs during a conversation turn",
+          flow_id: "The unique ID of the matched flow",
+          flow_display_name: "The human readable name of the flow",
+          page_id: "The unique ID of the matched page",
+          page_display_name: "The human readable name of the page",
+          status: "Refers to the outcome or result of a particular step",
+          session_parameters_initial: "The initial value of various session parameters used across the pages in the agent",
+          session_parameters_updated: "The updated value of various session parameters used across the pages in the agent",
+          system_function_results: "The detailed information about the evaluation of system functions within your agent",
+          responses: "The output or result that a function produces after it has been executed",
+          matched_intent: "The human readable name of the matched intent",
+          triggered_transition_route_id: "A unique ID of the transition route on a page",
+          triggered_intent: "The intent that is triggered based on the user utterance",
+          triggered_condition: "The condition that is met based on the context & the user utterance",
+          target_flow_id: "A unique ID of the flow that is triggered based on the user utterance",
+          target_page_id: "A unique ID of the page that is triggered based on the user utterance",
+          webhook_id: "A unique ID of the triggered webhook function call",
+          webhook_display_name: "The readable name of the triggered webhook function call",
+          webhook_latency_ms: "The latency associated with a particular function call made from the agent",
+          webhook_status: "The PASS or the FAILURE status associated with a particular function call made from the agent",
+          webhook_status_error_message: "The error message associated with a failed webhook call",
+          webhook_url: "The entire URL associated with a particular function call made from the agent",
+          step_processing_ms: "Describes how long it took, in milliseconds, to process a specific step within a function",
+        }
+      },
+      webhooks: {
+        description: "The webhook executed within a turn",
+        columns: {
+          step: "Refers to a single action or processing unit that occurs during a conversation turn",
+          flow_id: "The unique ID of the matched flow",
+          flow_display_name: "The human readable name of the flow",
+          page_id: "The unique ID of the matched page", // Corrected 'pagen' to 'page'
+          page_display_name: "The human readable name of the page",
+          webhook_id: "A unique ID of the triggered webhook function call",
+          webhook_display_name: "The readable name of the triggered webhook function call",
+          webhook_latency_ms: "The latency associated with a particular function call made from the agent",
+          webhook_status: "The PASS or the FAILURE status associated with a particular function call made from the agent",
+          webhook_status_error_message: "The error message associated with a failed webhook call",
+          webhook_url: "The entire URL associated with a particular function call made from the agent",
+          session_parameters_updated: "The updated value of various session parameters used across the pages in the agent",
+        }
+      },
+      alternative_matched_intents: {
+        description: "The list of intents that are closely matched based on the user utterance",
+        columns: {
+          alternative_matched_intent: "The intent that is closely matched based on the user utterance",
+          score: "The confidence score associated with the matched intent",
+        }
+      },
+      input_audio_ms: "The user utterance voice latency",
+      output_audio_ms: "The agent utterance voice latency",
+      actions: {
+        description: "The actions performed by the generative playbook for the current turn",
+        columns: {
+          action_step: "The order of the action",
+          action: "The type of action executed",
+          action_id: "The fully qualified unique ID for the action",
+          action_name: "The name of the action",
+          action_state: "The state of the action",
+          action_input: "The input parameters to the action",
+          action_output: "The output parameters of the action",
+        }
+      },
+      playbooks: {
+        description: "The list of playbooks used within the agent",
+        columns: {
+          playbook_step: "The order of the playbooks entered",
+          playbook_id: "The fully qualified unique ID for the triggered playbook",
+          playbook_name: "The human readable name associated with the triggered playbook",
+        }
+      },
+      response_messages: "Represents a response message that can be returned by a conversational agent",
+      playbook_metrics: {
+        description: "The key metrics associated with the overall playbooks part of the agent",
+        columns: {
+          llm_latency_ms: "The latency associated due to the payload context size associated with the playbook",
+          tool_latency_ms: "The latency due to the tools being called from the playbook",
+          total_latency_ms: "The total latency associated with a playbook call",
+          input_token_limit: "The max incoming JSON payload context size into a playbook",
+          output_token_limit: "The  max outgoing JSON payload context size from a playbook",
+          input_tokens_count: "The actual number of token numbers of incoming JSON payload into a playbook",
+          output_tokens_count: "The actual number of token numbers of outgoing JSON payload from a playbook",
+          states: "The multiple states associated with the playbook execution",
+        }
+      },
+      insert_time: "The UTC timestamp of when the record was inserted to the source table"
     }
 }
 
@@ -407,8 +409,9 @@ WITH
         WHEN JSON_EXTRACT(action,'$.playbookInvocation') IS NOT NULL THEN 'playbookInvocation'
         WHEN JSON_EXTRACT(action,'$.flowInvocation') IS NOT NULL THEN 'flowInvocation'
       END as action
-      ,COALESCE( ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) AS action_id
-      ,COALESCE( JSON_VALUE(action,'$.toolUse.action'),action_id_decoder.action_name) AS action_name
+      ,COALESCE(ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) AS action_id
+      ,COALESCE(JSON_VALUE(action,'$.toolUse.action'),action_id_decoder.action_name) AS action_name
+      ,COALESCE(JSON_VALUE(action,'$.toolUse.toolState'),JSON_VALUE(action,'$.playbookInvocation.playbookState'),JSON_VALUE(action,'$.flowInvocation.flowState')) AS action_state
       ,COALESCE(JSON_QUERY(action,'$.toolUse.inputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookInput'),JSON_QUERY(action,'$.flowInvocation.inputActionParameters')) as action_input
       ,COALESCE(JSON_QUERY(action,'$.toolUse.outputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookOutput'),JSON_QUERY(action,'$.flowInvocation.outputActionParameters'),JSON_OBJECT()) as action_output
     FROM base_data
@@ -439,6 +442,7 @@ WITH
           ,action
           ,action_id
           ,action_name
+          ,action_state
           ,action_input
           ,action_output
         )

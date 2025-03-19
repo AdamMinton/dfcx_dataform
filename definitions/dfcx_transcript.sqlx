@@ -302,7 +302,7 @@ WITH
     JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency') AS webhook_latency,
     CAST(REGEXP_EXTRACT(JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency'),r'(\d+)') AS INT64) AS webhook_latency_ms,
     COALESCE( JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status'), JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorCode') ) AS webhook_status,
-    COALESCE( JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status'), JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorCode') ) AS webhook_status,
+    JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorMessage') AS webhook_status_error_message,
     JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.URL') AS webhook_url
   FROM
     execution_sequence AS es ),

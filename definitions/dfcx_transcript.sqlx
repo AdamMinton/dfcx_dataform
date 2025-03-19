@@ -135,362 +135,286 @@ config {
 WITH
   base_data AS (
   SELECT
-    dfcx_position.session_start_time,
-    dfcx.project_id AS project_id,
-    SPLIT(dfcx.conversation_name,'/')[SAFE_OFFSET(3)] AS location,
-    dfcx.agent_id AS agent_id,
-    ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] AS session_id,
-    dfcx_position.position AS position,
-    JSON_VALUE(dfcx.response,'$.responseId') AS response_id,
-    dfcx.request_time AS request_time,
-    dfcx.insert_time as insert_time,
-    JSON_VALUE(dfcx.request,'$.queryInput.text.text') AS user_utterance,
-    JSON_VALUE(dfcx.request,'$.queryInput.dtmf.digits') AS optional_dtmf_digits,
-    ARRAY_REVERSE(SPLIT(JSON_VALUE(dfcx.response,'$.queryResult.intent.name'),'/'))[SAFE_OFFSET(0)] AS intent_display_id,
-    JSON_VALUE(dfcx.response,'$.queryResult.intent.displayName') AS intent_display_name,
-    JSON_VALUE(dfcx.response,'$.queryResult.match.matchType') AS match_type,
-    CAST(JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') AS FLOAT64) AS intent_confidence_score,
-    TO_JSON(COALESCE(JSON_QUERY(dfcx.response,'$.queryResult.parameters'),JSON_OBJECT())) AS session_parameters,
-    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Execution Sequence') AS execution_sequence,
-    dfcx.language_code,
-    JSON_VALUE(dfcx.request,'$.queryInput.event.event') AS event,
-    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.responseMessages') AS response_messages,
-    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Alternative Matched Intents') AS alternative_matched_intents,
-    JSON_VALUE(dfcx.derived_data,'$.agentUtterances') as agent_response,
-    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.actionTracingInfo.actions') as actions,
-    JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.currentPlaybooks') as current_playbooks,
-    JSON_QUERY(dfcx.response,'$.queryResult.match.knowledgeConnectorAnswer') as knowledge_connector_answer,
-    derived_data.v3SessionLatencies.executionStepDurations AS execution_steps_durations,
-    JSON_VALUE(dfcx.derived_data,'$.speechRecognitionConfig.model') AS speech_recognition_model,
-    COALESCE(SAFE_DIVIDE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.inputAudioDuration.nanos') AS INT64),1000000),0) 
-      + COALESCE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.inputAudioDuration.seconds') AS INT64) * 1000,0) AS input_audio_ms,
-    COALESCE(SAFE_DIVIDE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.outputAudioDuration.nanos') AS INT64),1000000),0) 
-      + COALESCE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.outputAudioDuration.seconds') AS INT64) * 1000,0) AS output_audio_ms,
-    STRUCT( NULLIF(COALESCE(SAFE_DIVIDE(SAFE_CAST((
-              SELECT
-                JSON_VALUE(a,'$.latency.nanos')
-              FROM
-                UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
-              WHERE
-                JSON_VALUE(a,'$.name')='runtime.playbook.llm_latency') AS INT64),1000000),0) + COALESCE(SAFE_CAST((
-            SELECT
-              JSON_VALUE(a,'$.latency.seconds')
-            FROM
-              UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
-            WHERE
-              JSON_VALUE(a,'$.name')='runtime.playbook.llm_latency') AS INT64) * 1000,0),0) AS llm_latency_ms,
-      NULLIF(COALESCE(SAFE_DIVIDE(SAFE_CAST((
-              SELECT
-                JSON_VALUE(a,'$.latency.nanos')
-              FROM
-                UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
-              WHERE
-                JSON_VALUE(a,'$.name')='runtime.playbook.tool_latency') AS INT64),1000000),0) + COALESCE(SAFE_CAST((
-            SELECT
-              JSON_VALUE(a,'$.latency.seconds')
-            FROM
-              UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
-            WHERE
-              JSON_VALUE(a,'$.name')='runtime.playbook.tool_latency') AS INT64) * 1000,0),0) AS tool_latency_ms,
-      NULLIF(COALESCE(SAFE_DIVIDE(SAFE_CAST((
-              SELECT
-                JSON_VALUE(a,'$.latency.nanos')
-              FROM
-                UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
-              WHERE
-                JSON_VALUE(a,'$.name')='runtime.playbook.total_latency') AS INT64),1000000),0) + COALESCE(SAFE_CAST((
-            SELECT
-              JSON_VALUE(a,'$.latency.seconds')
-            FROM
-              UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
-            WHERE
-              JSON_VALUE(a,'$.name')='runtime.playbook.total_latency') AS INT64) * 1000,0),0) AS total_latency_ms,
-      SAFE_CAST((
-        SELECT
-          JSON_VALUE(a,'$.metrics."playbook.input_token_limit"')
-        FROM
-          UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
-        WHERE
-          JSON_VALUE(a,'$.feature')='PLAYBOOK') AS INT64) AS input_token_limit,
-      SAFE_CAST((
-        SELECT
-          JSON_VALUE(a,'$.metrics."playbook.output_token_limit"')
-        FROM
-          UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
-        WHERE
-          JSON_VALUE(a,'$.feature')='PLAYBOOK') AS INT64) AS output_token_limit,
-      (
-      SELECT
-        ARRAY_AGG(CAST(value AS INT64))
-      FROM
-        UNNEST((
-          SELECT
-            JSON_VALUE_ARRAY(a,'$.metrics."playbook.input_tokens_count"')
-          FROM
-            UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
-          WHERE
-            JSON_VALUE(a,'$.feature')='PLAYBOOK')) AS value) AS input_tokens_count,
-      (
-      SELECT
-        ARRAY_AGG(CAST(value AS INT64))
-      FROM
-        UNNEST((
-          SELECT
-            JSON_VALUE_ARRAY(a,'$.metrics."playbook.output_tokens_count"')
-          FROM
-            UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
-          WHERE
-            JSON_VALUE(a,'$.feature')='PLAYBOOK')) AS value) AS output_tokens_count,
-      (
-      SELECT
-        JSON_VALUE_ARRAY(a,'$.metrics."playbook.states"')
-      FROM
-        UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
-      WHERE
-        JSON_VALUE(a,'$.feature')='PLAYBOOK') AS states ) AS playbook_metrics
+      dfcx_position.session_start_time
+    ,dfcx.project_id AS project_id
+    ,SPLIT(dfcx.conversation_name,'/')[SAFE_OFFSET(3)] AS location
+    ,dfcx.agent_id AS agent_id
+    ,ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] AS session_id
+    ,dfcx_position.position AS position
+    ,JSON_VALUE(dfcx.response,'$.responseId') AS response_id
+    ,dfcx.request_time AS request_time
+    ,dfcx.insert_time as insert_time
+    ,JSON_VALUE(dfcx.request,'$.queryInput.text.text') AS user_utterance
+    ,JSON_VALUE(dfcx.request,'$.queryInput.dtmf.digits') AS optional_dtmf_digits
+    ,ARRAY_REVERSE(SPLIT(JSON_VALUE(dfcx.response,'$.queryResult.intent.name'),'/'))[SAFE_OFFSET(0)] AS intent_display_id
+    ,JSON_VALUE(dfcx.response,'$.queryResult.intent.displayName') AS intent_display_name
+    ,JSON_VALUE(dfcx.response,'$.queryResult.match.matchType') AS match_type
+    ,CAST(JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') AS FLOAT64) AS intent_confidence_score
+    ,TO_JSON(COALESCE(JSON_QUERY(dfcx.response,'$.queryResult.parameters'),JSON_OBJECT())) AS session_parameters
+    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Execution Sequence') AS execution_sequence
+    ,dfcx.language_code
+    ,JSON_VALUE(dfcx.request,'$.queryInput.event.event') AS event
+    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.responseMessages') AS response_messages
+    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Alternative Matched Intents') AS alternative_matched_intents
+    ,JSON_VALUE(dfcx.derived_data,'$.agentUtterances') as agent_response
+    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.actionTracingInfo.actions') as actions
+    ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.currentPlaybooks') as current_playbooks
+    ,JSON_QUERY(dfcx.response,'$.queryResult.match.knowledgeConnectorAnswer') as knowledge_connector_answer
+    ,derived_data.v3SessionLatencies.executionStepDurations AS execution_steps_durations
+    ,JSON_VALUE(dfcx.derived_data,'$.speechRecognitionConfig.model') AS speech_recognition_model
+    ,COALESCE(SAFE_DIVIDE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.inputAudioDuration.nanos') AS INT64),1000000),0)
+      + COALESCE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.inputAudioDuration.seconds') AS INT64) * 1000,0) AS input_audio_ms
+    ,COALESCE(SAFE_DIVIDE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.outputAudioDuration.nanos') AS INT64),1000000),0)
+      + COALESCE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.outputAudioDuration.seconds') AS INT64) * 1000,0) AS output_audio_ms
+    ,STRUCT( 
+        NULLIF(
+          COALESCE(SAFE_DIVIDE(SAFE_CAST((SELECT JSON_VALUE(a,'$.latency.nanos')
+          FROM UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
+          WHERE JSON_VALUE(a,'$.name')='runtime.playbook.llm_latency') AS INT64),1000000),0) 
+          + COALESCE(SAFE_CAST((SELECT JSON_VALUE(a,'$.latency.seconds')
+          FROM UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
+          WHERE JSON_VALUE(a,'$.name')='runtime.playbook.llm_latency') AS INT64) * 1000,0)
+          ,0) AS llm_latency_ms
+        ,NULLIF(
+          COALESCE(SAFE_DIVIDE(SAFE_CAST((SELECT JSON_VALUE(a,'$.latency.nanos')
+          FROM UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
+          WHERE JSON_VALUE(a,'$.name')='runtime.playbook.tool_latency') AS INT64),1000000),0) 
+          + COALESCE(SAFE_CAST((SELECT JSON_VALUE(a,'$.latency.seconds')
+          FROM UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
+          WHERE JSON_VALUE(a,'$.name')='runtime.playbook.tool_latency') AS INT64) * 1000,0)
+          ,0) AS tool_latency_ms
+        ,NULLIF(
+          COALESCE(
+          SAFE_DIVIDE(SAFE_CAST((SELECT JSON_VALUE(a,'$.latency.nanos')
+          FROM UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
+          WHERE JSON_VALUE(a,'$.name')='runtime.playbook.total_latency') AS INT64),1000000),0) 
+          + COALESCE(SAFE_CAST((SELECT JSON_VALUE(a,'$.latency.seconds')
+          FROM UNNEST(JSON_EXTRACT_ARRAY(dfcx.derived_data['responseMetrics']['stepMetrics'])) AS a
+          WHERE JSON_VALUE(a,'$.name')='runtime.playbook.total_latency') AS INT64) * 1000,0)
+          ,0) AS total_latency_ms
+        ,SAFE_CAST((SELECT JSON_VALUE(a,'$.metrics."playbook.input_token_limit"')
+          FROM UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
+          WHERE JSON_VALUE(a,'$.feature')='PLAYBOOK') AS INT64) AS input_token_limit
+        ,SAFE_CAST((SELECT JSON_VALUE(a,'$.metrics."playbook.output_token_limit"')
+          FROM UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
+          WHERE JSON_VALUE(a,'$.feature')='PLAYBOOK') AS INT64) AS output_token_limit
+        ,(SELECT ARRAY_AGG(CAST(value AS INT64))
+          FROM UNNEST((SELECT JSON_VALUE_ARRAY(a,'$.metrics."playbook.input_tokens_count"')
+          FROM UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
+          WHERE JSON_VALUE(a,'$.feature')='PLAYBOOK')) AS value) AS input_tokens_count
+        ,(SELECT ARRAY_AGG(CAST(value AS INT64))
+          FROM UNNEST((SELECT JSON_VALUE_ARRAY(a,'$.metrics."playbook.output_tokens_count"')
+          FROM UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
+          WHERE JSON_VALUE(a,'$.feature')='PLAYBOOK')) AS value) AS output_tokens_count
+        ,(SELECT JSON_VALUE_ARRAY(a,'$.metrics."playbook.states"')
+          FROM UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
+          WHERE JSON_VALUE(a,'$.feature')='PLAYBOOK') AS states
+      ) AS playbook_metrics
   FROM `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` AS dfcx
     INNER JOIN ${ref("dfcx_transcript_position")} as dfcx_position
-        ON ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] = dfcx_position.session_id
-        AND dfcx.request_time = dfcx_position.request_time
+      ON ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] = dfcx_position.session_id
+      AND dfcx.request_time = dfcx_position.request_time
   WHERE TRUE
     AND dfcx.insert_time > insert_time_checkpoint
     AND dfcx_position.insert_time > insert_time_checkpoint
-  QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY request_time DESC) = 1
-  ),
-  execution_sequence AS (
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id,response_id ORDER BY request_time DESC) = 1
+  )
+  ,execution_sequence AS (
   SELECT
-    step + 1 AS step,
-    session_id,
-    response_id,
-    REGEXP_REPLACE(REGEXP_REPLACE(TO_JSON_STRING(execution_sequence),r'Step \d+','Step X'),r'SessionParameters\(Updated\)','SessionParameters') AS execution_sequence_step
-  FROM
-    base_data
-  LEFT JOIN
-    UNNEST(base_data.execution_sequence) AS execution_sequence
-  WITH
-  OFFSET
-    AS step
-  WHERE
-    1=1 ),
-  execution_sequence_parse AS (
+      step + 1 AS step
+    ,session_id
+    ,response_id
+    ,REGEXP_REPLACE(REGEXP_REPLACE(TO_JSON_STRING(execution_sequence),r'Step \d+','Step X'),r'SessionParameters\(Updated\)','SessionParameters') AS execution_sequence_step
+  FROM base_data
+    LEFT JOIN UNNEST(base_data.execution_sequence) AS execution_sequence WITH OFFSET AS step
+  )
+  ,execution_sequence_parse AS (
   SELECT
-    session_id,
-    response_id,
-    step,
-    JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.FlowId') AS flow_id_initial_state,
-    JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.Name') AS flow_display_name_initial_state,
-    JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.PageId') AS page_id_initial_state,
-    JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.Name') AS page_display_name_initial_state,
-    COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.InitialState.MatchedIntent'))),JSON_OBJECT()) AS matched_intent,
-    JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.Status') AS status_initial_state,
-    COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.InitialState.SessionParameters'))),JSON_OBJECT()) AS session_parameters_initial,
-    JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.FlowId') AS flow_id,
-    JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.Name') AS flow_display_name,
-    JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.PageId') AS page_id,
-    JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.Name') AS page_display_name,
-    JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.Status') AS status,
-    COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SessionParameters'))),JSON_OBJECT()) AS session_parameters_updated,
-    COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SystemFunctionResults'))), JSON_OBJECT()) AS system_function_results,
-    JSON_QUERY_ARRAY(execution_sequence_step,'$.Step X.FunctionExecution.Responses') AS responses,
-    JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredTransitionRouteId') AS triggered_transition_route_id,
-    JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredIntent') AS triggered_intent,
-    JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredCondition') AS triggered_condition,
-    JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TargetFlow') AS target_flow_id,
-    JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TargetPage') AS target_page_id,
-    JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.ID') AS webhook_id,
-    JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.DisplayName') AS webhook_display_name,
-    JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency') AS webhook_latency,
-    CAST(REGEXP_EXTRACT(JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency'),r'(\d+)') AS INT64) AS webhook_latency_ms,
-    COALESCE( JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status'), JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorCode') ) AS webhook_status,
-    JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorMessage') AS webhook_status_error_message,
-    JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.URL') AS webhook_url
+      session_id
+    ,response_id
+    ,step
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.FlowId') AS flow_id_initial_state
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.Name') AS flow_display_name_initial_state
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.PageId') AS page_id_initial_state
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.Name') AS page_display_name_initial_state
+    ,COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.InitialState.MatchedIntent'))),JSON_OBJECT()) AS matched_intent
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.Status') AS status_initial_state
+    ,COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.InitialState.SessionParameters'))),JSON_OBJECT()) AS session_parameters_initial
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.FlowId') AS flow_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.Name') AS flow_display_name
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.PageId') AS page_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.Name') AS page_display_name
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.Status') AS status
+    ,COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SessionParameters'))),JSON_OBJECT()) AS session_parameters_updated
+    ,COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SystemFunctionResults'))),JSON_OBJECT()) AS system_function_results
+    ,JSON_QUERY_ARRAY(execution_sequence_step,'$.Step X.FunctionExecution.Responses') AS responses
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredTransitionRouteId') AS triggered_transition_route_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredIntent') AS triggered_intent
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredCondition') AS triggered_condition
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TargetFlow') AS target_flow_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TargetPage') AS target_page_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.ID') AS webhook_id
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.DisplayName') AS webhook_display_name
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency') AS webhook_latency
+    ,CAST(REGEXP_EXTRACT(JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency'),r'(\d+)') AS INT64) AS webhook_latency_ms
+    ,COALESCE( JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status'),JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorCode') ) AS webhook_status
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorMessage') AS webhook_status_error_message
+    ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.URL') AS webhook_url
   FROM
-    execution_sequence AS es ),
-  execution_steps_durations AS (
+    execution_sequence AS es )
+  ,execution_steps_durations AS (
   SELECT
-    session_id,
-    response_id,
-    SAFE_CAST(REGEXP_EXTRACT(execution_step_duration, r'Step (\d+)') AS INT64) AS duration_step,
-    SAFE_CAST(REGEXP_EXTRACT(execution_step_duration, r':(\d+)') AS INT64) AS step_ms
-  FROM
-    base_data,
-    UNNEST(SPLIT(REGEXP_REPLACE(TO_JSON_STRING(execution_steps_durations), r'[{}]', ''), ',')) AS execution_step_duration ),
-  determine_execution_sequence_components AS (
+      session_id
+    ,response_id
+    ,SAFE_CAST(REGEXP_EXTRACT(execution_step_duration,r'Step (\d+)') AS INT64) AS duration_step
+    ,SAFE_CAST(REGEXP_EXTRACT(execution_step_duration,r':(\d+)') AS INT64) AS step_ms
+  FROM base_data
+    INNER JOIN UNNEST(SPLIT(REGEXP_REPLACE(TO_JSON_STRING(execution_steps_durations),r'[{}]',''),',')) AS execution_step_duration )
+  ,determine_execution_sequence_components AS (
   SELECT
-    session_id,
-    response_id,
-    step,
-  IF
-    (JSON_QUERY(execution_sequence.execution_sequence_step, '$.Step X.InitialState') IS NULL, 0, 1) AS initial_state_present,
-  IF
-    (JSON_QUERY(execution_sequence.execution_sequence_step, '$.Step X.StateMachine') IS NULL, 0, 1) AS state_machine_present,
-  IF
-    (JSON_QUERY(execution_sequence.execution_sequence_step, '$.Step X.FunctionExecution') IS NULL, 0, 1) AS function_execution_present
+      session_id
+    ,response_id
+    ,step
+    ,IF(JSON_QUERY(execution_sequence.execution_sequence_step,'$.Step X.InitialState') IS NULL,0,1) AS initial_state_present
+    ,IF(JSON_QUERY(execution_sequence.execution_sequence_step,'$.Step X.StateMachine') IS NULL,0,1) AS state_machine_present
+    ,IF(JSON_QUERY(execution_sequence.execution_sequence_step,'$.Step X.FunctionExecution') IS NULL,0,1) AS function_execution_present
   FROM
-    execution_sequence ),
-  find_duration_end_ranges AS (
+    execution_sequence )
+  ,find_duration_end_ranges AS (
   SELECT
-    session_id,
-    response_id,
-    step,
-    initial_state_present + state_machine_present + function_execution_present AS components_present,
-    SUM(initial_state_present + state_machine_present + function_execution_present) OVER (PARTITION BY session_id, response_id ORDER BY step ASC) AS end_duration_step
-  FROM
-    determine_execution_sequence_components ),
-  find_duration_start_ranges AS (
+      session_id
+    ,response_id
+    ,step
+    ,initial_state_present + state_machine_present + function_execution_present AS components_present
+    ,SUM(initial_state_present + state_machine_present + function_execution_present) OVER (PARTITION BY session_id,response_id ORDER BY step ASC) AS end_duration_step
+  FROM determine_execution_sequence_components )
+  ,find_duration_start_ranges AS (
   SELECT
-    session_id,
-    response_id,
-    step,
-    components_present,
-    COALESCE(LAG(end_duration_step,1) OVER (PARTITION BY session_id, response_id ORDER BY step ASC)+1,1) AS start_duration_step,
-    end_duration_step
+    session_id
+    ,response_id
+    ,step
+    ,components_present
+    ,COALESCE(LAG(end_duration_step,1) OVER (PARTITION BY session_id,response_id ORDER BY step ASC)+1,1) AS start_duration_step
+    ,end_duration_step
   FROM
-    find_duration_end_ranges ),
-  associate_durations_to_step AS (
+    find_duration_end_ranges )
+  ,associate_durations_to_step AS (
   SELECT
-    execution_sequence_parse.session_id,
-    execution_sequence_parse.response_id,
-    execution_sequence_parse.step,
-    SUM(execution_steps_durations.step_ms) AS total_step_ms
-  FROM
-    execution_sequence_parse
-  LEFT JOIN
-    find_duration_start_ranges
-  ON
-    execution_sequence_parse.session_id = find_duration_start_ranges.session_id
+    execution_sequence_parse.session_id
+    ,execution_sequence_parse.response_id
+    ,execution_sequence_parse.step
+    ,SUM(execution_steps_durations.step_ms) AS total_step_ms
+  FROM execution_sequence_parse
+  LEFT JOIN find_duration_start_ranges
+    ON execution_sequence_parse.session_id = find_duration_start_ranges.session_id
     AND execution_sequence_parse.response_id = find_duration_start_ranges.response_id
     AND execution_sequence_parse.step = find_duration_start_ranges.step
-  LEFT JOIN
-    execution_steps_durations
-  ON
-    execution_steps_durations.session_id = find_duration_start_ranges.session_id
+  LEFT JOIN execution_steps_durations
+    ON execution_steps_durations.session_id = find_duration_start_ranges.session_id
     AND execution_steps_durations.response_id = find_duration_start_ranges.response_id
     AND execution_steps_durations.duration_step BETWEEN find_duration_start_ranges.start_duration_step
     AND find_duration_start_ranges.end_duration_step
-  GROUP BY
-    1,
-    2,
-    3 ),
-  execution_sequence_agg AS (
+  GROUP BY 1,2,3 )
+  ,execution_sequence_agg AS (
   SELECT
-    session_id,
-    response_id,
-    COUNT(*) AS execution_sequence_count,
-    ARRAY_AGG(STRUCT( step,
-        COALESCE(flow_id_initial_state,flow_id) AS flow_id,
-        COALESCE(flow_display_name_initial_state,flow_display_name) AS flow_display_name,
-        COALESCE(page_id_initial_state,page_id) AS page_id,
-        COALESCE(page_display_name_initial_state,page_display_name) AS page_display_name,
-        COALESCE(status_initial_state,status) AS status,
-        session_parameters_initial,
-        session_parameters_updated,
-        system_function_results,
-        responses,
-        matched_intent,
-        triggered_transition_route_id,
-        triggered_intent,
-        triggered_condition,
-        target_flow_id,
-        target_page_id,
-        webhook_id,
-        webhook_display_name,
-        webhook_latency_ms,
-        webhook_status,
-        webhook_status_error_message,
-        webhook_url,
-      IF
-        (COALESCE(total_step_ms,0) > 0,COALESCE(total_step_ms,0) - COALESCE(webhook_latency_ms,0),0) AS step_processing_ms )
-    ORDER BY
-      step ASC) AS execution_sequence
-  FROM
-    execution_sequence_parse
-  LEFT JOIN
-    associate_durations_to_step
-  USING
-    (session_id,
-      response_id,
-      step)
-  GROUP BY
-    1,
-    2 ),
-  webhook_agg AS (
+    session_id
+    ,response_id
+    ,COUNT(*) AS execution_sequence_count
+    ,ARRAY_AGG(STRUCT( step
+        ,COALESCE(flow_id_initial_state,flow_id) AS flow_id
+        ,COALESCE(flow_display_name_initial_state,flow_display_name) AS flow_display_name
+        ,COALESCE(page_id_initial_state,page_id) AS page_id
+        ,COALESCE(page_display_name_initial_state,page_display_name) AS page_display_name
+        ,COALESCE(status_initial_state,status) AS status
+        ,session_parameters_initial
+        ,session_parameters_updated
+        ,system_function_results
+        ,responses
+        ,matched_intent
+        ,triggered_transition_route_id
+        ,triggered_intent
+        ,triggered_condition
+        ,target_flow_id
+        ,target_page_id
+        ,webhook_id
+        ,webhook_display_name
+        ,webhook_latency_ms
+        ,webhook_status
+        ,webhook_status_error_message
+        ,webhook_url
+        ,IF(COALESCE(total_step_ms,0) > 0,COALESCE(total_step_ms,0) - COALESCE(webhook_latency_ms,0),0) AS step_processing_ms )
+      ORDER BY step ASC) AS execution_sequence
+  FROM execution_sequence_parse
+    LEFT JOIN associate_durations_to_step
+      USING(session_id,response_id,step)
+  GROUP BY 1,2 )
+  ,webhook_agg AS (
   SELECT
-    session_id,
-    response_id,
-    ARRAY_AGG(STRUCT( step,
-        flow_id,
-        flow_display_name,
-        page_id,
-        page_display_name,
-        webhook_id,
-        webhook_display_name,
-        webhook_latency_ms,
-        webhook_status,
-        webhook_status_error_message,
-        webhook_url,
-        session_parameters_updated )
-    ORDER BY
-      step ASC) AS webhooks
-  FROM
-    execution_sequence_parse
-  WHERE
-    webhook_id IS NOT NULL
-  GROUP BY
-    1,
-    2 ),
-  source_and_target_page AS (
+    session_id
+    ,response_id
+    ,ARRAY_AGG(STRUCT(
+      step
+      ,flow_id
+      ,flow_display_name
+      ,page_id
+      ,page_display_name
+      ,webhook_id
+      ,webhook_display_name
+      ,webhook_latency_ms
+      ,webhook_status
+      ,webhook_status_error_message
+      ,webhook_url
+      ,session_parameters_updated)
+    ORDER BY step ASC) AS webhooks
+  FROM execution_sequence_parse
+  WHERE TRUE
+    AND webhook_id IS NOT NULL
+  GROUP BY 1,2 )
+  ,source_and_target_page AS (
   SELECT
-    session_id,
-    response_id,
-    execution_sequence[SAFE_OFFSET(0)].flow_id AS source_flow_id,
-    execution_sequence[SAFE_OFFSET(0)].flow_display_name AS source_flow_display_name,
-    execution_sequence[SAFE_OFFSET(0)].page_id AS source_page_id,
-    execution_sequence[SAFE_OFFSET(0)].page_display_name AS source_page_display_name,
-    execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].flow_id,
-    execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].flow_display_name,
-    execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_id,
-    execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_display_name,
-    extract_matched_intent_parameters(execution_sequence[SAFE_OFFSET(0)].matched_intent) as matched_intent_parameters,
-  FROM
-    execution_sequence_agg ),
-  alternative_matched_intents AS (
+      session_id
+    ,response_id
+    ,execution_sequence[SAFE_OFFSET(0)].flow_id AS source_flow_id
+    ,execution_sequence[SAFE_OFFSET(0)].flow_display_name AS source_flow_display_name
+    ,execution_sequence[SAFE_OFFSET(0)].page_id AS source_page_id
+    ,execution_sequence[SAFE_OFFSET(0)].page_display_name AS source_page_display_name
+    ,execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].flow_id
+    ,execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].flow_display_name
+    ,execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_id
+    ,execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_display_name
+    ,extract_matched_intent_parameters(execution_sequence[SAFE_OFFSET(0)].matched_intent) as matched_intent_parameters
+  FROM execution_sequence_agg )
+  ,alternative_matched_intents AS (
   SELECT
-    session_id,
-    response_id,
-    ARRAY_AGG( STRUCT( JSON_VALUE(alternative_matched_intent,'$.DisplayName') AS alternative_matched_intent,
-        SAFE_CAST(JSON_VALUE(alternative_matched_intent,'$.Score') AS NUMERIC) AS score )
+    session_id
+    ,response_id
+    ,ARRAY_AGG( STRUCT( JSON_VALUE(alternative_matched_intent,'$.DisplayName') AS alternative_matched_intent
+        ,SAFE_CAST(JSON_VALUE(alternative_matched_intent,'$.Score') AS NUMERIC) AS score )
     ORDER BY
       SAFE_CAST(JSON_VALUE(alternative_matched_intent,'$.Score') AS NUMERIC) DESC ) AS alternative_matched_intents
-  FROM
-    base_data,
-    UNNEST(alternative_matched_intents) AS alternative_matched_intent
-  WITH
-  OFFSET
-    AS alternative_matched_intents_offset
-  WHERE
-    JSON_VALUE(alternative_matched_intent,'$.DisplayName') <> base_data.intent_display_name
-  GROUP BY
-    1,
-    2 ),
-  actions AS (
+  FROM base_data
+    INNER JOIN UNNEST(alternative_matched_intents) AS alternative_matched_intent WITH OFFSET AS alternative_matched_intents_offset
+  WHERE TRUE
+    AND JSON_VALUE(alternative_matched_intent,'$.DisplayName') <> base_data.intent_display_name
+  GROUP BY 1,2 )
+  ,actions AS (
     SELECT
-      session_id,
-      response_id,
-      ROW_NUMBER() OVER (PARTITION BY session_id, response_id ORDER BY action_step ASC ) as action_step,
-      CASE 
+      session_id
+      ,response_id
+      ,ROW_NUMBER() OVER (PARTITION BY session_id,response_id ORDER BY action_step ASC ) as action_step
+      ,CASE
         WHEN JSON_EXTRACT(action,'$.toolUse') IS NOT NULL THEN 'toolUse'
         WHEN JSON_EXTRACT(action,'$.playbookInvocation') IS NOT NULL THEN 'playbookInvocation'
         WHEN JSON_EXTRACT(action,'$.flowInvocation') IS NOT NULL THEN 'flowInvocation'
-      END as action,
-      COALESCE( ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)], ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)], ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) AS action_id,
-      COALESCE( JSON_VALUE(action,'$.toolUse.action'),action_id_decoder.action_name) AS action_name,
-      COALESCE(JSON_QUERY(action,'$.toolUse.inputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookInput'),JSON_QUERY(action,'$.flowInvocation.inputActionParameters')) as action_input,
-      COALESCE(JSON_QUERY(action,'$.toolUse.outputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookOutput'),JSON_QUERY(action,'$.flowInvocation.outputActionParameters'),JSON_OBJECT()) as action_output
+      END as action
+      ,COALESCE( ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) AS action_id
+      ,COALESCE( JSON_VALUE(action,'$.toolUse.action'),action_id_decoder.action_name) AS action_name
+      ,COALESCE(JSON_QUERY(action,'$.toolUse.inputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookInput'),JSON_QUERY(action,'$.flowInvocation.inputActionParameters')) as action_input
+      ,COALESCE(JSON_QUERY(action,'$.toolUse.outputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookOutput'),JSON_QUERY(action,'$.flowInvocation.outputActionParameters'),JSON_OBJECT()) as action_output
     FROM base_data
       LEFT JOIN UNNEST(actions) as action WITH OFFSET as action_step
       LEFT JOIN ${ref("action_id_decoder")} AS action_id_decoder
-        ON COALESCE( ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)], ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)], ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) = action_id_decoder.action_id
+        ON COALESCE( ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) = action_id_decoder.action_id
     WHERE TRUE
       AND (COALESCE(
         JSON_VALUE(action,'$.playbookInvocation.playbookState'),
@@ -499,124 +423,98 @@ WITH
         JSON_VALUE(action,'$.playbookInvocation.playbookState'),
         JSON_VALUE(action,'$.flowInvocation.flowState')
       ) IN ('OUTPUT_STATE_OK'))
-      AND CASE 
+      AND CASE
           WHEN JSON_EXTRACT(action,'$.toolUse') IS NOT NULL THEN 'toolUse'
           WHEN JSON_EXTRACT(action,'$.playbookInvocation') IS NOT NULL THEN 'playbookInvocation'
           WHEN JSON_EXTRACT(action,'$.flowInvocation') IS NOT NULL THEN 'flowInvocation'
         END IS NOT NULL
-  ),
-  actions_agg AS (
-    SELECT 
-      session_id,
-      response_id,
-      ARRAY_AGG(
+  )
+  ,actions_agg AS (
+    SELECT
+      session_id
+      ,response_id
+      ,ARRAY_AGG(
         STRUCT(
-          action_step,
-          action,
-          action_id,
-          action_name,
-          action_input,
-          action_output
+          action_step
+          ,action
+          ,action_id
+          ,action_name
+          ,action_input
+          ,action_output
         )
       ) as actions
     FROM actions
-    GROUP BY 1,2
-  ),
-  playbooks AS (
+    GROUP BY 1,2 )
+  ,playbooks AS (
     SELECT
-      session_id,
-      response_id,
-      playbook_step,
-      ARRAY_REVERSE(SPLIT(JSON_VALUE(current_playbook,'$'),'/'))[SAFE_OFFSET(0)] AS playbook_id,
-      COALESCE(action_id_decoder.action_name) AS playbook_name
-  FROM
-    base_data
-  LEFT JOIN UNNEST(current_playbooks) as current_playbook WITH OFFSET as playbook_step
-  LEFT JOIN
-    ${ref("action_id_decoder")} AS action_id_decoder
-  ON
-    ARRAY_REVERSE(SPLIT(JSON_VALUE(current_playbook,'$'),'/'))[SAFE_OFFSET(0)] = action_id_decoder.action_id ),
-  playbooks_agg AS (
-  SELECT
-    session_id,
-    response_id,
-    ARRAY_AGG(STRUCT(playbook_step,playbook_id,playbook_name )) AS playbooks
-  FROM
-    playbooks
-  GROUP BY
-    1,
-    2 )
+      session_id
+      ,response_id
+      ,playbook_step
+      ,ARRAY_REVERSE(SPLIT(JSON_VALUE(current_playbook,'$'),'/'))[SAFE_OFFSET(0)] AS playbook_id
+      ,COALESCE(action_id_decoder.action_name) AS playbook_name
+    FROM base_data
+      LEFT JOIN UNNEST(current_playbooks) as current_playbook WITH OFFSET as playbook_step
+      LEFT JOIN ${ref("action_id_decoder")} AS action_id_decoder
+        ON ARRAY_REVERSE(SPLIT(JSON_VALUE(current_playbook,'$'),'/'))[SAFE_OFFSET(0)] = action_id_decoder.action_id )
+  ,playbooks_agg AS (
+    SELECT
+      session_id
+      ,response_id
+      ,ARRAY_AGG(STRUCT(playbook_step,playbook_id,playbook_name )) AS playbooks
+    FROM playbooks
+    GROUP BY 1,2 )
 SELECT
-  base_data.project_id,
-  base_data.location,
-  base_data.agent_id,
-  base_data.session_id,
-  base_data.session_start_time,
-  base_data.response_id,
-  base_data.request_time,
-  base_data.position,
-  base_data.user_utterance,
-  base_data.optional_dtmf_digits,
-  base_data.agent_response,
-  source_and_target_page.source_flow_id,
-  source_and_target_page.source_flow_display_name,
-  source_and_target_page.source_page_id,
-  source_and_target_page.source_page_display_name,
-  source_and_target_page.matched_intent_parameters,
-  source_and_target_page.flow_id,
-  source_and_target_page.flow_display_name,
-  source_and_target_page.page_id,
-  source_and_target_page.page_display_name,
-  base_data.intent_display_id,
-  base_data.intent_display_name,
-  base_data.intent_confidence_score,
-  base_data.match_type,
-  base_data.event,
-  execution_sequence_agg.execution_sequence_count,
-  base_data.language_code,
-  base_data.session_parameters,
-  execution_sequence_agg.execution_sequence,
-  webhook_agg.webhooks,
-  alternative_matched_intents.alternative_matched_intents,
-  base_data.input_audio_ms,
-  base_data.output_audio_ms,
-  actions_agg.actions,
-  playbooks_agg.playbooks,
-  base_data.playbook_metrics,
-  base_data.response_messages,
-  base_data.insert_time
-FROM
-  base_data
-LEFT JOIN
-  execution_sequence_agg
-USING
-  (session_id,
-    response_id)
-LEFT JOIN
-  webhook_agg
-USING
-  (session_id,
-    response_id)
-LEFT JOIN
-  source_and_target_page
-USING
-  (session_id,
-    response_id)
-LEFT JOIN
-  alternative_matched_intents
-USING
-  (session_id,
-    response_id)
-LEFT JOIN
-  actions_agg
-USING
-  (session_id,
-    response_id)
-LEFT JOIN
-  playbooks_agg
-USING
-  (session_id,
-    response_id)
+  base_data.project_id
+  ,base_data.location
+  ,base_data.agent_id
+  ,base_data.session_id
+  ,base_data.session_start_time
+  ,base_data.response_id
+  ,base_data.request_time
+  ,base_data.position
+  ,base_data.user_utterance
+  ,base_data.optional_dtmf_digits
+  ,base_data.agent_response
+  ,source_and_target_page.source_flow_id
+  ,source_and_target_page.source_flow_display_name
+  ,source_and_target_page.source_page_id
+  ,source_and_target_page.source_page_display_name
+  ,source_and_target_page.matched_intent_parameters
+  ,source_and_target_page.flow_id
+  ,source_and_target_page.flow_display_name
+  ,source_and_target_page.page_id
+  ,source_and_target_page.page_display_name
+  ,base_data.intent_display_id
+  ,base_data.intent_display_name
+  ,base_data.intent_confidence_score
+  ,base_data.match_type
+  ,base_data.event
+  ,execution_sequence_agg.execution_sequence_count
+  ,base_data.language_code
+  ,base_data.session_parameters
+  ,execution_sequence_agg.execution_sequence
+  ,webhook_agg.webhooks
+  ,alternative_matched_intents.alternative_matched_intents
+  ,base_data.input_audio_ms
+  ,base_data.output_audio_ms
+  ,actions_agg.actions
+  ,playbooks_agg.playbooks
+  ,base_data.playbook_metrics
+  ,base_data.response_messages
+  ,base_data.insert_time
+FROM base_data
+  LEFT JOIN execution_sequence_agg
+    USING(session_id,response_id)
+  LEFT JOIN webhook_agg
+    USING(session_id,response_id)
+  LEFT JOIN source_and_target_page
+    USING(session_id,response_id)
+  LEFT JOIN alternative_matched_intents
+    USING(session_id,response_id)
+  LEFT JOIN actions_agg
+    USING(session_id,response_id)
+  LEFT JOIN playbooks_agg
+    USING(session_id,response_id)
 
 pre_operations {
   DECLARE
@@ -628,46 +526,46 @@ pre_operations {
     }
     );
 
-CREATE TEMP FUNCTION extract_matched_intent_parameters(jsonObject JSON)
-RETURNS ARRAY<STRUCT<session_parameter STRING, original STRING, resolved ARRAY<STRING>, type STRING>>
-LANGUAGE js AS """
-  try {
-    if (!jsonObject || !jsonObject.Parameters) {
+  CREATE TEMP FUNCTION extract_matched_intent_parameters(jsonObject JSON)
+  RETURNS ARRAY<STRUCT<session_parameter STRING, original STRING, resolved ARRAY<STRING>, type STRING>>
+  LANGUAGE js AS """
+    try {
+      if (!jsonObject || !jsonObject.Parameters) {
+        return [];
+      }
+
+      const parameters = jsonObject.Parameters;
+      const result = [];
+
+      for (const key in parameters) {
+        if (parameters.hasOwnProperty(key)) {
+          const param = parameters[key];
+
+          let resolvedArray;
+          if (Array.isArray(param.resolved)) {
+            // Handle case where resolved is an array
+            resolvedArray = param.resolved.map(item => typeof item === 'object' ? JSON.stringify(item) : item.toString());
+          } else if (typeof param.resolved === 'object' && param.resolved !== null) {
+            // Handle case where resolved is a single object
+            resolvedArray = [JSON.stringify(param.resolved)];
+          } else {
+            // Handle case where resolved is a string or null
+            resolvedArray = param.resolved ? [param.resolved.toString()] : [];
+          }
+
+          result.push({
+            session_parameter: key,
+            original: param.original ? param.original.toString() : '',
+            resolved: resolvedArray,
+            type: param.type ? param.type.toString() : ''
+          });
+        }
+      }
+
+      return result;
+    } catch (e) {
       return [];
     }
-
-    const parameters = jsonObject.Parameters;
-    const result = [];
-
-    for (const key in parameters) {
-      if (parameters.hasOwnProperty(key)) {
-        const param = parameters[key];
-
-        let resolvedArray;
-        if (Array.isArray(param.resolved)) {
-          // Handle case where resolved is an array
-          resolvedArray = param.resolved.map(item => typeof item === 'object' ? JSON.stringify(item) : item.toString());
-        } else if (typeof param.resolved === 'object' && param.resolved !== null) {
-          // Handle case where resolved is a single object
-          resolvedArray = [JSON.stringify(param.resolved)];
-        } else {
-          // Handle case where resolved is a string or null
-          resolvedArray = param.resolved ? [param.resolved.toString()] : [];
-        }
-
-        result.push({
-          session_parameter: key,
-          original: param.original ? param.original.toString() : '',
-          resolved: resolvedArray,
-          type: param.type ? param.type.toString() : ''
-        });
-      }
-    }
-
-    return result;
-  } catch (e) {
-    return [];
-  }
-""";
+  """;
 
 }

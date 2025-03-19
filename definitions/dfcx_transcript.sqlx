@@ -150,7 +150,7 @@ WITH
     JSON_VALUE(dfcx.response,'$.queryResult.intent.displayName') AS intent_display_name,
     JSON_VALUE(dfcx.response,'$.queryResult.match.matchType') AS match_type,
     CAST(JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') AS FLOAT64) AS intent_confidence_score,
-    JSON_QUERY(dfcx.response,'$.queryResult.parameters') AS session_parameters,
+    TO_JSON(COALESCE(JSON_QUERY(dfcx.response,'$.queryResult.parameters'),JSON_OBJECT())) AS session_parameters,
     JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Execution Sequence') AS execution_sequence,
     dfcx.language_code,
     JSON_VALUE(dfcx.request,'$.queryInput.event.event') AS event,
@@ -302,6 +302,7 @@ WITH
     JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency') AS webhook_latency,
     CAST(REGEXP_EXTRACT(JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency'),r'(\d+)') AS INT64) AS webhook_latency_ms,
     COALESCE( JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status'), JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorCode') ) AS webhook_status,
+    COALESCE( JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status'), JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorCode') ) AS webhook_status,
     JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.URL') AS webhook_url
   FROM
     execution_sequence AS es ),
@@ -396,6 +397,7 @@ WITH
         webhook_display_name,
         webhook_latency_ms,
         webhook_status,
+        webhook_status_error_message,
         webhook_url,
       IF
         (COALESCE(total_step_ms,0) > 0,COALESCE(total_step_ms,0) - COALESCE(webhook_latency_ms,0),0) AS step_processing_ms )
@@ -425,6 +427,7 @@ WITH
         webhook_display_name,
         webhook_latency_ms,
         webhook_status,
+        webhook_status_error_message,
         webhook_url,
         session_parameters_updated )
     ORDER BY
@@ -447,7 +450,10 @@ WITH
     execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].flow_id,
     execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].flow_display_name,
     execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_id,
-    execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_display_name
+    execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_display_name,
+    extract_matched_intent_data(TO_JSON_STRING(execution_sequence[SAFE_OFFSET(0)].matched_intent))[SAFE_OFFSET(0)].type  as entity_parameter,
+    extract_matched_intent_data(TO_JSON_STRING(execution_sequence[SAFE_OFFSET(0)].matched_intent))[SAFE_OFFSET(0)].parameter_key as entity_type,
+    extract_matched_intent_data(TO_JSON_STRING(execution_sequence[SAFE_OFFSET(0)].matched_intent))[SAFE_OFFSET(0)].resolved as resolved_input
   FROM
     execution_sequence_agg ),
   alternative_matched_intents AS (
@@ -482,7 +488,7 @@ WITH
       COALESCE( ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)], ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)], ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) AS action_id,
       COALESCE( JSON_VALUE(action,'$.toolUse.action'),action_id_decoder.action_name) AS action_name,
       COALESCE(JSON_QUERY(action,'$.toolUse.inputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookInput'),JSON_QUERY(action,'$.flowInvocation.inputActionParameters')) as action_input,
-      COALESCE(JSON_QUERY(action,'$.toolUse.outputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookOutput'),JSON_OBJECT()) as action_output
+      COALESCE(JSON_QUERY(action,'$.toolUse.outputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookOutput'),JSON_QUERY(action,'$.flowInvocation.outputActionParameters'),JSON_OBJECT()) as action_output
     FROM base_data
       LEFT JOIN UNNEST(actions) as action WITH OFFSET as action_step
       LEFT JOIN ${ref("action_id_decoder")} AS action_id_decoder
@@ -558,6 +564,8 @@ SELECT
   source_and_target_page.source_flow_display_name,
   source_and_target_page.source_page_id,
   source_and_target_page.source_page_display_name,
+  source_and_target_page.entity_parameter,
+  source_and_target_page.entity_type,
   source_and_target_page.flow_id,
   source_and_target_page.flow_display_name,
   source_and_target_page.page_id,
@@ -566,6 +574,7 @@ SELECT
   base_data.intent_display_name,
   base_data.intent_confidence_score,
   base_data.match_type,
+  source_and_target_page.resolved_input,
   base_data.event,
   execution_sequence_agg.execution_sequence_count,
   base_data.language_code,
@@ -578,7 +587,7 @@ SELECT
   actions_agg.actions,
   playbooks_agg.playbooks,
   base_data.playbook_metrics,
-  base_data.response_messages as response_messages,
+  base_data.response_messages,
   base_data.insert_time
 FROM
   base_data
@@ -622,4 +631,36 @@ pre_operations {
             `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
     }
     );
+
+  CREATE TEMP FUNCTION extract_matched_intent_data(json_string STRING)
+  RETURNS ARRAY<STRUCT<parameter_key STRING, original STRING, resolved STRING, type STRING>>
+  LANGUAGE js AS """
+    try {
+      const jsonObject = JSON.parse(json_string);
+      const intent = jsonObject;
+
+      if (intent && intent.Parameters) {
+        const parameters = intent.Parameters;
+        const result = [];
+        for (const key in parameters) {
+          if (parameters.hasOwnProperty(key)) {
+            const param = parameters[key];
+            if (param.original && param.resolved && param.type) {
+              result.push({
+                parameter_key: key,
+                original: param.original.toString(),
+                resolved: param.resolved.toString(),
+                type: param.type.toString()
+              });
+            }
+          }
+        }
+        return result;
+      } else {
+        return [];
+      }
+    } catch (e) {
+      return [];
+    }
+  """;
 }

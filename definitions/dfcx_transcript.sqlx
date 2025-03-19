@@ -451,9 +451,7 @@ WITH
     execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].flow_display_name,
     execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_id,
     execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_display_name,
-    extract_matched_intent_data(TO_JSON_STRING(execution_sequence[SAFE_OFFSET(0)].matched_intent))[SAFE_OFFSET(0)].type  as entity_parameter,
-    extract_matched_intent_data(TO_JSON_STRING(execution_sequence[SAFE_OFFSET(0)].matched_intent))[SAFE_OFFSET(0)].parameter_key as entity_type,
-    extract_matched_intent_data(TO_JSON_STRING(execution_sequence[SAFE_OFFSET(0)].matched_intent))[SAFE_OFFSET(0)].resolved as resolved_input
+    extract_matched_intent_parameters(execution_sequence[SAFE_OFFSET(0)].matched_intent) as matched_intent_parameters,
   FROM
     execution_sequence_agg ),
   alternative_matched_intents AS (
@@ -564,8 +562,7 @@ SELECT
   source_and_target_page.source_flow_display_name,
   source_and_target_page.source_page_id,
   source_and_target_page.source_page_display_name,
-  source_and_target_page.entity_parameter,
-  source_and_target_page.entity_type,
+  source_and_target_page.matched_intent_parameters,
   source_and_target_page.flow_id,
   source_and_target_page.flow_display_name,
   source_and_target_page.page_id,
@@ -574,7 +571,6 @@ SELECT
   base_data.intent_display_name,
   base_data.intent_confidence_score,
   base_data.match_type,
-  source_and_target_page.resolved_input,
   base_data.event,
   execution_sequence_agg.execution_sequence_count,
   base_data.language_code,
@@ -632,35 +628,46 @@ pre_operations {
     }
     );
 
-  CREATE TEMP FUNCTION extract_matched_intent_data(json_string STRING)
-  RETURNS ARRAY<STRUCT<parameter_key STRING, original STRING, resolved STRING, type STRING>>
-  LANGUAGE js AS """
-    try {
-      const jsonObject = JSON.parse(json_string);
-      const intent = jsonObject;
-
-      if (intent && intent.Parameters) {
-        const parameters = intent.Parameters;
-        const result = [];
-        for (const key in parameters) {
-          if (parameters.hasOwnProperty(key)) {
-            const param = parameters[key];
-            if (param.original && param.resolved && param.type) {
-              result.push({
-                parameter_key: key,
-                original: param.original.toString(),
-                resolved: param.resolved.toString(),
-                type: param.type.toString()
-              });
-            }
-          }
-        }
-        return result;
-      } else {
-        return [];
-      }
-    } catch (e) {
+CREATE TEMP FUNCTION extract_matched_intent_parameters(jsonObject JSON)
+RETURNS ARRAY<STRUCT<parameter_key STRING, original STRING, resolved ARRAY<STRING>, type STRING>>
+LANGUAGE js AS """
+  try {
+    if (!jsonObject || !jsonObject.Parameters) {
       return [];
     }
-  """;
+
+    const parameters = jsonObject.Parameters;
+    const result = [];
+
+    for (const key in parameters) {
+      if (parameters.hasOwnProperty(key)) {
+        const param = parameters[key];
+
+        let resolvedArray;
+        if (Array.isArray(param.resolved)) {
+          // Handle case where resolved is an array
+          resolvedArray = param.resolved.map(item => typeof item === 'object' ? JSON.stringify(item) : item.toString());
+        } else if (typeof param.resolved === 'object' && param.resolved !== null) {
+          // Handle case where resolved is a single object
+          resolvedArray = [JSON.stringify(param.resolved)];
+        } else {
+          // Handle case where resolved is a string or null
+          resolvedArray = param.resolved ? [param.resolved.toString()] : [];
+        }
+
+        result.push({
+          parameter_key: key,
+          original: param.original ? param.original.toString() : '',
+          resolved: resolvedArray,
+          type: param.type ? param.type.toString() : ''
+        });
+      }
+    }
+
+    return result;
+  } catch (e) {
+    return [];
+  }
+""";
+
 }

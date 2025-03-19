@@ -1,92 +1,107 @@
 config {
-    type: "incremental",
-    bigquery: {
-        partitionBy: "TIMESTAMP_TRUNC(insert_time, HOUR)",
-        requirePartitionFilter : true
-    },
-    description: "ELT assistance table to create new position",
+  type: "incremental",
+  bigquery: {
+    partitionBy: "TIMESTAMP_TRUNC(insert_time, HOUR)",
+    updatePartitionFilter: "insert_time >= update_partition_checkpoint",
+    requirePartitionFilter : true
+  },
+  uniqueKey: ["session_id","insert_time"],
+  description: "ELT assistance table to create new position and session start time",
+  columns: {
+    session_start_time: "The time at which a session starts",
+    session_id: "The fully qualified unique ID for the session",
+    request_time: "The time of the conversational turn",
+    insert_time: "The UTC timestamp of when the record was inserted to the source table",
+    position: "The conversational turn number",
+  }
+}
+
+pre_operations {
+  DECLARE insert_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE insert_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL (${dataform.projectConfig.vars.checkpointSeconds}) SECOND)`,
+            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
+    }
+    );
+  DECLARE update_partition_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL (${dataform.projectConfig.vars.insertDelaySeconds} + ${dataform.projectConfig.vars.sessionMaxSeconds}) SECOND)`,
+            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
+    }
+  );
 }
 
 WITH
-  recent_insert_data AS (
+recent_insert_data AS (
   SELECT
-    ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] AS session_id,
-    request_time,
-    insert_time
+    ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] AS session_id
+    ,request_time
+    ,insert_time
   FROM
     `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` AS dfcx
   WHERE TRUE
     AND insert_time > insert_time_checkpoint
   GROUP BY 1,2,3
-  ),
-  all_session_records AS (
-  SELECT
-    session_id,
-    request_time,
-    insert_time
+)
+,all_session_records AS (
+  SELECT 
+    session_id
+    ,request_time
+    ,insert_time
+    ,position
   FROM
-    ${
-        when(incremental(),
-            `${self()}`,
-            `(SELECT CAST(null as string) as session_id, CURRENT_TIMESTAMP() as request_time, CURRENT_TIMESTAMP() as insert_time)`)
+    ${when(incremental(),
+      `${self()}`,
+      `(SELECT SAFE_CAST(NULL AS STRING) AS session_id, CURRENT_TIMESTAMP() AS request_time, CURRENT_TIMESTAMP() AS insert_time, 0 AS position)`)
     }
   WHERE TRUE
-    AND insert_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL 36 HOUR)
+    AND insert_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL ${dataform.projectConfig.vars.sessionMaxSeconds} SECOND)
     AND session_id IN (SELECT session_id FROM recent_insert_data) 
-  GROUP BY 1,2,3
-  ),
-  union_distinct AS (
-  SELECT *
+  GROUP BY 1,2,3,4
+)
+,union_distinct AS (
+  SELECT 
+    session_id
+    ,request_time
+    ,insert_time
+    ,position
   FROM
   (
-  SELECT
-    *
-  FROM
-    recent_insert_data
-    ${
-        when(incremental(),
-            `UNION DISTINCT SELECT * FROM all_session_records`,
-            ``)
-    }
+    SELECT session_id, request_time, insert_time, 0 as position
+    FROM recent_insert_data
+      ${when(incremental(),
+        `UNION DISTINCT SELECT session_id, request_time, insert_time, position FROM all_session_records`,
+        ``)
+      }
   )
-  GROUP BY 1,2,3
-    ),
-  session_start_time AS (
+  GROUP BY 1,2,3,4
+)
+,session_start_time AS (
   SELECT
-    session_id,
-    MIN(request_time) AS session_start_time
-  FROM
-    union_distinct
-  GROUP BY
-    1 ),
-  ranking_position as
-  (
-    SELECT
-      session_start_time.session_start_time,
-      union_distinct.session_id,
-      union_distinct.request_time,
-      union_distinct.insert_time,
-      ROW_NUMBER() OVER (PARTITION BY union_distinct.session_id ORDER BY union_distinct.request_time ASC) AS position
-    FROM
-      union_distinct
-    LEFT JOIN
-      session_start_time
-    USING
-      (session_id)
+    session_id
+    ,MIN(request_time) AS session_start_time
+  FROM union_distinct
+  GROUP BY 1
+)
+,ranking_position AS (
+  SELECT
+    session_start_time.session_start_time,
+    union_distinct.session_id,
+    union_distinct.request_time,
+    union_distinct.insert_time,
+    ROW_NUMBER() OVER (PARTITION BY union_distinct.session_id ORDER BY union_distinct.request_time ASC) AS position
+  FROM union_distinct
+    LEFT JOIN session_start_time
+      USING (session_id)
+)
+SELECT ranking_position.*
+FROM ranking_position
+  LEFT JOIN union_distinct
+    USING (session_id, insert_time)
+WHERE TRUE
+  AND (
+    union_distinct.position IS NULL --completely new row
+    OR union_distinct.position <> ranking_position.position --ranking changed
   )
-  SELECT *
-  FROM ranking_position
-  WHERE TRUE
-    AND ${when(incremental(),
-      `request_time IN (SELECT request_time FROM recent_insert_data)`,
-      `TRUE`)}
-pre_operations {
-  DECLARE
-    insert_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE insert_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
-    }
-    );
-}

@@ -6,8 +6,7 @@ dataformCoreVersion: 3.0.0-beta.4
 datasetSuffix: development
 vars:
   dialogflowExport: insights_demo.dialogflow_bigquery_export_data
-  partitionTime: DAY
-  backfillTimestamp: TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 4000 DAY)
+  backfillTimestamp: TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 4000 HOUR)
   insertDelaySeconds: "300"
   sessionMaxSeconds: "40000"
   checkpointSeconds: "86400"

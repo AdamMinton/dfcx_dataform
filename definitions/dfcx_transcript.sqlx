@@ -134,10 +134,83 @@ config {
     }
 }
 
+pre_operations {
+  DECLARE insert_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+          `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL (${dataform.projectConfig.vars.checkpointSeconds}) SECOND)`,
+          `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
+    }
+    );
+
+  ${
+    when(incremental(),
+      `MERGE ${self()} AS t 
+      USING ( 
+          SELECT *  
+          FROM ${ref("dfcx_transcript_position")}
+          WHERE insert_time >= insert_time_checkpoint
+        ) AS s
+      ON t.session_id = s.session_id
+      AND t.insert_time = s.insert_time
+      AND t.session_start_time >= insert_time_checkpoint
+
+      WHEN MATCHED THEN
+      UPDATE SET
+        t.session_start_time = s.session_start_time,
+        t.position = s.position;`,
+        ``
+    )
+  }
+  
+  CREATE TEMP FUNCTION extract_matched_intent_parameters(jsonObject JSON)
+  RETURNS ARRAY<STRUCT<session_parameter STRING, original STRING, resolved ARRAY<STRING>, entity_type STRING>>
+  LANGUAGE js AS """
+    try {
+      if (!jsonObject || !jsonObject.Parameters) {
+        return [];
+      }
+
+      const parameters = jsonObject.Parameters;
+      const result = [];
+
+      for (const key in parameters) {
+        if (parameters.hasOwnProperty(key)) {
+          const param = parameters[key];
+
+          let resolvedArray;
+          if (Array.isArray(param.resolved)) {
+            // Handle case where resolved is an array
+            resolvedArray = param.resolved.map(item => typeof item === 'object' ? JSON.stringify(item) : item.toString());
+          } else if (typeof param.resolved === 'object' && param.resolved !== null) {
+            // Handle case where resolved is a single object
+            resolvedArray = [JSON.stringify(param.resolved)];
+          } else {
+            // Handle case where resolved is a string or null
+            resolvedArray = param.resolved ? [param.resolved.toString()] : [];
+          }
+
+          result.push({
+            session_parameter: key,
+            original: param.original ? param.original.toString() : '',
+            resolved: resolvedArray,
+            entity_type: param.type && param.type.toString().trim() !== '' ? param.type.toString() : null
+          });
+        }
+      }
+
+      return result;
+    } catch (e) {
+      return [];
+    }
+  """;
+
+}
+
 WITH
   base_data AS (
   SELECT
-      dfcx_position.session_start_time
+    dfcx_position.session_start_time
     ,dfcx.project_id AS project_id
     ,SPLIT(dfcx.conversation_name,'/')[SAFE_OFFSET(3)] AS location
     ,dfcx.agent_id AS agent_id
@@ -232,7 +305,7 @@ WITH
   )
   ,execution_sequence_parse AS (
   SELECT
-      session_id
+    session_id
     ,response_id
     ,step
     ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.FlowId') AS flow_id_initial_state
@@ -266,7 +339,7 @@ WITH
     execution_sequence AS es )
   ,execution_steps_durations AS (
   SELECT
-      session_id
+    session_id
     ,response_id
     ,SAFE_CAST(REGEXP_EXTRACT(execution_step_duration,r'Step (\d+)') AS INT64) AS duration_step
     ,SAFE_CAST(REGEXP_EXTRACT(execution_step_duration,r':(\d+)') AS INT64) AS step_ms
@@ -274,7 +347,7 @@ WITH
     INNER JOIN UNNEST(SPLIT(REGEXP_REPLACE(TO_JSON_STRING(execution_steps_durations),r'[{}]',''),',')) AS execution_step_duration )
   ,determine_execution_sequence_components AS (
   SELECT
-      session_id
+    session_id
     ,response_id
     ,step
     ,IF(JSON_QUERY(execution_sequence.execution_sequence_step,'$.Step X.InitialState') IS NULL,0,1) AS initial_state_present
@@ -284,7 +357,7 @@ WITH
     execution_sequence )
   ,find_duration_end_ranges AS (
   SELECT
-      session_id
+    session_id
     ,response_id
     ,step
     ,initial_state_present + state_machine_present + function_execution_present AS components_present
@@ -519,57 +592,3 @@ FROM base_data
     USING(session_id,response_id)
   LEFT JOIN playbooks_agg
     USING(session_id,response_id)
-
-pre_operations {
-  DECLARE
-    insert_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
-    }
-    );
-
-  CREATE TEMP FUNCTION extract_matched_intent_parameters(jsonObject JSON)
-  RETURNS ARRAY<STRUCT<session_parameter STRING, original STRING, resolved ARRAY<STRING>, entity_type STRING>>
-  LANGUAGE js AS """
-    try {
-      if (!jsonObject || !jsonObject.Parameters) {
-        return [];
-      }
-
-      const parameters = jsonObject.Parameters;
-      const result = [];
-
-      for (const key in parameters) {
-        if (parameters.hasOwnProperty(key)) {
-          const param = parameters[key];
-
-          let resolvedArray;
-          if (Array.isArray(param.resolved)) {
-            // Handle case where resolved is an array
-            resolvedArray = param.resolved.map(item => typeof item === 'object' ? JSON.stringify(item) : item.toString());
-          } else if (typeof param.resolved === 'object' && param.resolved !== null) {
-            // Handle case where resolved is a single object
-            resolvedArray = [JSON.stringify(param.resolved)];
-          } else {
-            // Handle case where resolved is a string or null
-            resolvedArray = param.resolved ? [param.resolved.toString()] : [];
-          }
-
-          result.push({
-            session_parameter: key,
-            original: param.original ? param.original.toString() : '',
-            resolved: resolvedArray,
-            entity_type: param.type && param.type.toString().trim() !== '' ? param.type.toString() : null
-          });
-        }
-      }
-
-      return result;
-    } catch (e) {
-      return [];
-    }
-  """;
-
-}

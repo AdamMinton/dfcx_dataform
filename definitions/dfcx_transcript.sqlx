@@ -151,8 +151,8 @@ WITH
     ,ARRAY_REVERSE(SPLIT(JSON_VALUE(dfcx.response,'$.queryResult.intent.name'),'/'))[SAFE_OFFSET(0)] AS intent_display_id
     ,JSON_VALUE(dfcx.response,'$.queryResult.intent.displayName') AS intent_display_name
     ,JSON_VALUE(dfcx.response,'$.queryResult.match.matchType') AS match_type
-    ,CAST(JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') AS FLOAT64) AS intent_confidence_score
-    ,TO_JSON(COALESCE(JSON_QUERY(dfcx.response,'$.queryResult.parameters'),JSON_OBJECT())) AS session_parameters
+    ,SAFE_CAST(JSON_VALUE(dfcx.response,'$.queryResult.match.confidence') AS FLOAT64) AS intent_confidence_score
+    ,JSON_QUERY(dfcx.response,'$.queryResult.parameters') AS session_parameters
     ,JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Execution Sequence') AS execution_sequence
     ,dfcx.language_code
     ,JSON_VALUE(dfcx.request,'$.queryInput.event.event') AS event
@@ -200,11 +200,11 @@ WITH
         ,SAFE_CAST((SELECT JSON_VALUE(a,'$.metrics."playbook.output_token_limit"')
           FROM UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
           WHERE JSON_VALUE(a,'$.feature')='PLAYBOOK') AS INT64) AS output_token_limit
-        ,(SELECT ARRAY_AGG(CAST(value AS INT64))
+        ,(SELECT ARRAY_AGG(SAFE_CAST(value AS INT64))
           FROM UNNEST((SELECT JSON_VALUE_ARRAY(a,'$.metrics."playbook.input_tokens_count"')
           FROM UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
           WHERE JSON_VALUE(a,'$.feature')='PLAYBOOK')) AS value) AS input_tokens_count
-        ,(SELECT ARRAY_AGG(CAST(value AS INT64))
+        ,(SELECT ARRAY_AGG(SAFE_CAST(value AS INT64))
           FROM UNNEST((SELECT JSON_VALUE_ARRAY(a,'$.metrics."playbook.output_tokens_count"')
           FROM UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
           WHERE JSON_VALUE(a,'$.feature')='PLAYBOOK')) AS value) AS output_tokens_count
@@ -239,16 +239,16 @@ WITH
     ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.Name') AS flow_display_name_initial_state
     ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.PageId') AS page_id_initial_state
     ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.Name') AS page_display_name_initial_state
-    ,COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.InitialState.MatchedIntent'))),JSON_OBJECT()) AS matched_intent
+    ,SAFE.PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.InitialState.MatchedIntent')) AS matched_intent
     ,JSON_VALUE(execution_sequence_step,'$.Step X.InitialState.FlowState.PageState.Status') AS status_initial_state
-    ,COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.InitialState.SessionParameters'))),JSON_OBJECT()) AS session_parameters_initial
+    ,SAFE.PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.InitialState.SessionParameters')) AS session_parameters_initial
     ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.FlowId') AS flow_id
     ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.Name') AS flow_display_name
     ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.PageId') AS page_id
     ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.Name') AS page_display_name
     ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.FlowState.PageState.Status') AS status
-    ,COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SessionParameters'))),JSON_OBJECT()) AS session_parameters_updated
-    ,COALESCE(TO_JSON(PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SystemFunctionResults'))),JSON_OBJECT()) AS system_function_results
+    ,SAFE.PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SessionParameters')) AS session_parameters_updated
+    ,SAFE.PARSE_JSON(JSON_QUERY(execution_sequence_step,'$.Step X.FunctionExecution.SystemFunctionResults')) AS system_function_results
     ,JSON_QUERY_ARRAY(execution_sequence_step,'$.Step X.FunctionExecution.Responses') AS responses
     ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredTransitionRouteId') AS triggered_transition_route_id
     ,JSON_VALUE(execution_sequence_step,'$.Step X.StateMachine.TriggeredIntent') AS triggered_intent
@@ -258,7 +258,7 @@ WITH
     ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.ID') AS webhook_id
     ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.DisplayName') AS webhook_display_name
     ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency') AS webhook_latency
-    ,CAST(REGEXP_EXTRACT(JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency'),r'(\d+)') AS INT64) AS webhook_latency_ms
+    ,SAFE_CAST(REGEXP_EXTRACT(JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Latency'),r'(\d+)') AS INT64) AS webhook_latency_ms
     ,COALESCE( JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status'),JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorCode') ) AS webhook_status
     ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorMessage') AS webhook_status_error_message
     ,JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.URL') AS webhook_url
@@ -413,7 +413,7 @@ WITH
       ,COALESCE(JSON_VALUE(action,'$.toolUse.action'),action_id_decoder.action_name) AS action_name
       ,COALESCE(JSON_VALUE(action,'$.toolUse.toolState'),JSON_VALUE(action,'$.playbookInvocation.playbookState'),JSON_VALUE(action,'$.flowInvocation.flowState')) AS action_state
       ,COALESCE(JSON_QUERY(action,'$.toolUse.inputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookInput'),JSON_QUERY(action,'$.flowInvocation.inputActionParameters')) as action_input
-      ,COALESCE(JSON_QUERY(action,'$.toolUse.outputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookOutput'),JSON_QUERY(action,'$.flowInvocation.outputActionParameters'),JSON_OBJECT()) as action_output
+      ,COALESCE(JSON_QUERY(action,'$.toolUse.outputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookOutput'),JSON_QUERY(action,'$.flowInvocation.outputActionParameters')) as action_output
     FROM base_data
       LEFT JOIN UNNEST(actions) as action WITH OFFSET as action_step
       LEFT JOIN ${ref("action_id_decoder")} AS action_id_decoder

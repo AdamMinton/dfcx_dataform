@@ -1,12 +1,50 @@
 config {
     type: "incremental",
     bigquery: {
-      partitionBy: "TIMESTAMP_TRUNC(session_start_time, HOUR)",
-      updatePartitionFilter: "session_start_time >= TIMESTAMP_SUB(session_start_time_checkpoint, INTERVAL 1 HOUR)",
+      partitionBy: "TIMESTAMP_TRUNC(session_start_time, DAY)",
+      updatePartitionFilter: "session_start_time >= session_start_time_checkpoint",
       requirePartitionFilter : true
     },
     uniqueKey: ["session_id"],
     description: "DFCX session summary information",
+}
+
+pre_operations {
+  DECLARE
+    insert_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MAX(latest_insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.checkpointSeconds} SECOND)`,
+            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
+    }
+    );
+  DECLARE 
+    session_start_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.checkpointSeconds} SECOND) AND insert_time > insert_time_checkpoint`,
+            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
+    }
+    );
+
+  ${
+    when(incremental(),
+      `MERGE ${self()} AS t 
+      USING ( 
+          SELECT *  
+          FROM ${ref("dfcx_transcript_position")}
+          WHERE insert_time >= insert_time_checkpoint
+        ) AS s
+      ON t.session_id = s.session_id
+      AND t.insert_time = s.insert_time
+      AND t.session_start_time >= session_start_time_checkpoint
+      WHEN MATCHED THEN
+      UPDATE SET
+        t.session_start_time = s.session_start_time;`,
+        ``
+    )
+  }
+
 }
 
 WITH
@@ -151,26 +189,10 @@ SELECT
   union_actions.primary_flow AS final_action_primary_flow,
   session_info.number_of_turns,
   session_info.final_language_code,
+  CONCAT( 'https://console.cloud.google.com/logs/query;', 'query=resource.type%3D%22global%22%0Aresource.labels.project_id%3D%22', project_id, '%22%0Alabels.session_id%3D%22', session_id, '%22;', 'timeRange=', FORMAT_DATETIME( '%Y-%m-%dT%H:%M:%S.000Z', DATETIME(session_start_time, 'UTC')), '%2F', FORMAT_DATETIME( '%Y-%m-%dT%H:%M:%S.000Z', DATETIME(session_start_time, 'UTC')), '--PT15M;', '?', 'project=', project_id) AS logs_explorer_url,
+  CONCAT( 'https://dialogflow.cloud.google.com/cx/projects/',project_id,'/locations/',location,'/agents/',agent_id,'/conversations/',session_id) AS dfcx_url,
+  'ESCALATED' as session_outcome,
   session_info.latest_insert_time
 FROM session_info
 LEFT JOIN final_message USING (session_id)
 LEFT JOIN union_actions USING (session_id)
-
-pre_operations {
-  DECLARE
-    insert_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MAX(latest_insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
-    }
-    );
-  DECLARE 
-    session_start_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 36 HOUR) AND insert_time > insert_time_checkpoint`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
-    }
-    )
-}

@@ -1,12 +1,31 @@
 config {
    type: "incremental",
    bigquery: {
-     partitionBy: "TIMESTAMP_TRUNC(session_start_time, HOUR)",
-     updatePartitionFilter: "session_start_time >= TIMESTAMP_SUB(session_start_time_checkpoint, INTERVAL 1 HOUR)",
+     partitionBy: "TIMESTAMP_TRUNC(session_start_time, DAY)",
+     updatePartitionFilter: "session_start_time >= session_start_time_checkpoint",
      requirePartitionFilter : true
    },
    uniqueKey: ["session_id", "interaction_position"],
    description: "Interactions for DFCX conversations",
+}
+
+pre_operations {
+  DECLARE
+    insert_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MAX(latest_insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
+            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
+    }
+    );
+  DECLARE 
+    session_start_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 36 HOUR) AND insert_time > insert_time_checkpoint`,
+            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
+    }
+    )
 }
 
 WITH
@@ -300,22 +319,3 @@ checking_self_service AS (
     ) as final_message,
     latest_insert_time
   FROM composing_table
-
-pre_operations {
-  DECLARE
-    insert_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MAX(latest_insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
-    }
-    );
-  DECLARE 
-    session_start_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 36 HOUR) AND insert_time > insert_time_checkpoint`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
-    }
-    )
-}

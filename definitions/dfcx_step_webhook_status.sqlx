@@ -1,10 +1,48 @@
 config {
     type: "incremental",
     bigquery: {
-        partitionBy: "TIMESTAMP_TRUNC(session_start_time, HOUR)",
+        partitionBy: "TIMESTAMP_TRUNC(session_start_time, DAY)",
         requirePartitionFilter : true
     },
     description: "Contains the status of the webhook if it soft failed",
+}
+
+pre_operations {
+  DECLARE
+    insert_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.checkpointSeconds} SECOND)`,
+            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
+    }
+    );
+  DECLARE 
+    session_start_time_checkpoint DEFAULT (
+    ${
+        when(incremental(),
+            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.checkpointSeconds} SECOND) AND insert_time > insert_time_checkpoint`,
+            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
+    }
+    );
+
+  ${
+    when(incremental(),
+      `MERGE ${self()} AS t 
+      USING ( 
+          SELECT *  
+          FROM ${ref("dfcx_transcript_position")}
+          WHERE insert_time >= insert_time_checkpoint
+        ) AS s
+      ON t.session_id = s.session_id
+      AND t.insert_time = s.insert_time
+      AND t.session_start_time >= session_start_time_checkpoint
+      WHEN MATCHED THEN
+      UPDATE SET
+        t.session_start_time = s.session_start_time;`,
+        ``
+    )
+  }
+
 }
 
 WITH
@@ -43,22 +81,3 @@ final_flag AS (
 SELECT
   *
 FROM final_flag
-
-pre_operations {
-  DECLARE
-    insert_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
-    }
-    );
-  DECLARE 
-    session_start_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 36 HOUR) AND insert_time > insert_time_checkpoint`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
-    }
-    )
-}

@@ -1,11 +1,50 @@
 config {
     type: "incremental",
     bigquery: {
-        partitionBy: "TIMESTAMP_TRUNC(session_start_time, HOUR)",
+        partitionBy: "TIMESTAMP_TRUNC(session_start_time, DAY)",
+        updatePartitionFilter: "session_start_time >= session_start_time_checkpoint",
         requirePartitionFilter : true
     },
+    uniqueKey: ["session_id","response_id"],
     description: "Additional Transcript Transformations",
 }
+
+pre_operations {
+  DECLARE insert_time_checkpoint DEFAULT (
+    ${
+      when(incremental(),
+        `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.checkpointSeconds} SECOND)`,
+        `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
+    }
+    );
+  DECLARE session_start_time_checkpoint DEFAULT (
+    ${
+      when(incremental(),
+        `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.checkpointSeconds} SECOND) AND insert_time > insert_time_checkpoint`,
+        `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
+    }
+    );
+
+  ${
+    when(incremental(),
+      `MERGE ${self()} AS t 
+      USING ( 
+          SELECT *  
+          FROM ${ref("dfcx_transcript_position")}
+          WHERE insert_time >= insert_time_checkpoint
+        ) AS s
+      ON t.session_id = s.session_id
+      AND t.insert_time = s.insert_time
+      AND t.session_start_time >= session_start_time_checkpoint
+      WHEN MATCHED THEN
+      UPDATE SET
+        t.session_start_time = s.session_start_time;`,
+        ``
+    )
+  }
+
+}
+
 
 WITH
 dfcx_transcript AS (
@@ -23,7 +62,15 @@ dfcx_transcript AS (
       source_flow_display_name,
       source_page_display_name,
       flow_display_name,
-      page_display_name
+      page_display_name,
+      (SELECT ARRAY_AGG(playbook_name) FROM UNNEST(playbooks) WHERE playbook_name is not null)[SAFE_OFFSET(0)] as source_playbook,
+      (SELECT ARRAY_AGG(playbook_name) FROM UNNEST(ARRAY_REVERSE(playbooks)) WHERE playbook_name is not null)[SAFE_OFFSET(0)] as playbook,
+      LAG(agent_response) OVER (PARTITION BY session_id ORDER BY request_time ASC) as source_agent_response,
+      LAG(match_type) OVER (PARTITION BY session_id ORDER BY position ASC) as source_match_type,
+      CASE WHEN intent_display_name is not null THEN intent_display_name ELSE match_type END as matched_intent,
+      LAG(flow_display_name) OVER (PARTITION BY session_id ORDER BY position ASC) as source_playbook_flow,
+      LAG(page_display_name) OVER (PARTITION BY session_id ORDER BY position ASC) as source_playbook_page,
+      LAG((SELECT ARRAY_AGG(playbook_name) FROM UNNEST(ARRAY_REVERSE(playbooks)) WHERE playbook_name is not null)[SAFE_OFFSET(0)]) OVER (PARTITION BY session_id ORDER BY position ASC) as playbook_playbook_before,
   FROM ${ref("dfcx_transcript")} AS dfcx_transcript
   WHERE TRUE
     AND session_start_time >= session_start_time_checkpoint
@@ -70,24 +117,22 @@ business_logic as (
     COALESCE(ai_indicators.contain_generators_content, FALSE) AS contain_generators_content,
     COALESCE(ai_indicators.contain_generative_fallback, FALSE) AS contain_generative_fallback,  
     IF(dfcx_transcript.match_type='PLAYBOOK' OR 'toolUse' IN UNNEST(actions.action) OR 'playbookInvocation' IN UNNEST(actions.action) OR 'flowInvocation' IN UNNEST(actions.action),TRUE,FALSE) as contain_playbook,
+    dfcx_transcript.matched_intent,
+    dfcx_transcript.source_agent_response,
     CASE
-      WHEN LAG(dfcx_transcript.match_type,1) OVER (PARTITION BY dfcx_transcript.session_id ORDER BY dfcx_transcript.request_time ASC) = 'PLAYBOOK' THEN  'PLAYBOOK'
-      WHEN dfcx_transcript.match_type = 'PLAYBOOK' THEN 'PLAYBOOK'
-      ELSE dfcx_transcript.source_flow_display_name
-      END as source_flow_display_name,
+      WHEN source_match_type <> 'PLAYBOOK' and match_type = 'PLAYBOOK' THEN source_playbook_flow
+      WHEN source_match_type = 'PLAYBOOK' and match_type <> 'PLAYBOOK' THEN 'PLAYBOOK'
+      WHEN source_match_type = 'PLAYBOOK' and match_type = 'PLAYBOOK' THEN 'PLAYBOOK'
+      ELSE source_flow_display_name
+      END AS source_flow_display_name,
     CASE
-      WHEN LAG(dfcx_transcript.match_type,1) OVER (PARTITION BY dfcx_transcript.session_id ORDER BY dfcx_transcript.request_time ASC) = 'PLAYBOOK' THEN  LAG(ARRAY_REVERSE(dfcx_transcript.playbooks)[SAFE_OFFSET(0)].playbook_name,1) OVER (PARTITION BY dfcx_transcript.session_id ORDER BY dfcx_transcript.request_time ASC)
-      WHEN dfcx_transcript.match_type = 'PLAYBOOK' THEN dfcx_transcript.playbooks[SAFE_OFFSET(0)].playbook_name
-      ELSE dfcx_transcript.source_page_display_name
-      END as source_page_display_name,
-    CASE
-      WHEN dfcx_transcript.match_type = 'PLAYBOOK' THEN 'PLAYBOOK'
-      ELSE dfcx_transcript.flow_display_name
-      END as flow_display_name,
-    CASE
-      WHEN dfcx_transcript.match_type = 'PLAYBOOK' THEN ARRAY_REVERSE(dfcx_transcript.playbooks)[SAFE_OFFSET(0)].playbook_name
-      ELSE dfcx_transcript.page_display_name
-      END as page_display_name,
+      WHEN source_match_type <> 'PLAYBOOK' and match_type = 'PLAYBOOK' THEN source_playbook_flow
+      WHEN source_match_type = 'PLAYBOOK' and match_type <> 'PLAYBOOK' THEN playbook_playbook_before
+      WHEN source_match_type = 'PLAYBOOK' and match_type = 'PLAYBOOK' THEN source_playbook
+      ELSE source_page_display_name
+      END AS source_page_display_name,
+    COALESCE(flow_display_name,'PLAYBOOK') as flow_display_name,
+    COALESCE(page_display_name,playbook) as page_display_name,
   FROM dfcx_transcript
   LEFT JOIN ai_indicators
     ON dfcx_transcript.session_id = ai_indicators.session_id
@@ -96,23 +141,3 @@ business_logic as (
 SELECT *
 FROM business_logic
 WHERE TRUE
-  AND insert_time > insert_time_checkpoint
-
-pre_operations {
-  DECLARE
-    insert_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
-    }
-    );
-  DECLARE 
-    session_start_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 36 HOUR) AND insert_time > insert_time_checkpoint`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
-    }
-    )
-}

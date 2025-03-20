@@ -5,6 +5,17 @@ config {
         requirePartitionFilter : true
     },
     description: "Contains the status of the webhook if it soft failed",
+    columns: {
+      session_start_time: "The time at which a session starts",
+      session_id: "The fully qualified unique ID for the session",
+      response_id: "The unique ID associated with the response from the agent",
+      request_time: "The time of the conversational turn",
+      insert_time: "The UTC timestamp of when the record was inserted to the source table",
+      step: "Refers to a single action or processing unit that occurs during a conversation turn",
+      status: "The status value extracted from the session parameters updated by the webhook",
+      status_did_pass: "Boolean indicator if the status suggests a pass (TRUE), fail (FALSE), or is undetermined (NULL)",
+      did_row_pass: "Final boolean flag indicating if the row represents a successful webhook status (TRUE) or a soft failure (FALSE)"
+    }
 }
 
 pre_operations {

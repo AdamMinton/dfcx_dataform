@@ -7,6 +7,40 @@ config {
    },
    uniqueKey: ["session_id", "interaction_position"],
    description: "Interactions for DFCX conversations",
+   columns: {
+     session_start_time: "The time at which a session starts",
+     session_id: "The fully qualified unique ID for the session",
+     interaction_position: "The position of the interaction within the session, based on head intents or start of conversation",
+     interaction_position_reverse: "The reverse position of the interaction within the session",
+     interaction_head_intent: "The main intent identified at the beginning of the interaction",
+     start_interaction_position: "The starting position within the transcript for this interaction",
+     end_interaction_position: "The ending position within the transcript for this interaction",
+     actions: {
+        description: "An array of actions performed during this interaction, including action type, status, and related flows/pages",
+        columns: {
+          action: "The name or identifier of the action performed",
+          action_type: "The type or category of the action (e.g., intent-specific, intent-agnostic)",
+          primary_action: "Indicates if this action is considered a primary action for the interaction",
+          action_started: "Boolean flag indicating if the action was started during this interaction",
+          action_started_position: "The transcript position where the action started",
+          action_ended: "Boolean flag indicating if the action was ended during this interaction",
+          action_ended_position: "The transcript position where the action ended",
+          primary_flow: "The primary Dialogflow CX flow associated with this action"
+        }
+     },
+     final_message: {
+       description: "Details of the last message in the interaction",
+       columns: {
+         match_type: "The intent or playbook match associated with the user utterance of the last message",
+         source_page_display_name: "The human readable name of the source page of the last message",
+         source_flow_display_name: "The human readable name of the source flow of the last message",
+         flow_display_name: "The human readable name of the flow of the last message",
+         page_display_name: "The human readable name of the page of the last message",
+         intent_display_name: "The human readable name of the matched intent of the last message"
+       }
+     },
+     latest_insert_time: "The timestamp of the latest insert for the session"
+   }
 }
 
 pre_operations {

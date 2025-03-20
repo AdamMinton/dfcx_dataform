@@ -7,6 +7,36 @@ config {
     },
     uniqueKey: ["session_id"],
     description: "DFCX session summary information",
+    columns: {
+      session_start_time: "The time at which a session started",
+      session_id: "The unique identifier for the session",
+      project_id: "The GCP project ID where the DFCX agent is deployed",
+      agent_id: "The user-provided identifier for the agent",
+      location: "The GCP project location of the DFCX agent",
+      session_end_time: "The time at which the session ended",
+      final_message: {
+        description: "Details of the final message in the session",
+        columns: {
+          match_type: "The intent or playbook match type of the final message",
+          source_page_display_name: "The display name of the source page for the final message",
+          source_flow_display_name: "The display name of the source flow for the final message",
+          flow_display_name: "The display name of the flow for the final message",
+          page_display_name: "The display name of the page for the final message",
+          intent_display_name: "The display name of the intent for the final message"
+        }
+      },
+      final_interaction_head_intent: "The head intent of the final interaction in the session",
+      final_action: "The final action taken in the session",
+      final_action_started: "Boolean indicating if the final action was started",
+      final_action_ended: "Boolean indicating if the final action was ended",
+      final_action_primary_flow: "The primary flow associated with the final action",
+      number_of_turns: "The total number of turns in the session",
+      final_language_code: "The language code of the final turn in the session",
+      logs_explorer_url: "URL to the Google Cloud Logs Explorer filtered to the session",
+      dfcx_url: "URL to the Dialogflow CX console for the session",
+      session_outcome: "The determined outcome of the session, currently defaulted to 'ESCALATED'",
+      latest_insert_time: "The timestamp of the latest insert for this session record"
+    }
 }
 
 pre_operations {
@@ -26,24 +56,6 @@ pre_operations {
             `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
     }
     );
-
-  ${
-    when(incremental(),
-      `MERGE ${self()} AS t
-      USING (
-          SELECT *
-          FROM ${ref("dfcx_transcript_position")}
-          WHERE insert_time >= insert_time_checkpoint
-        ) AS s
-      ON t.session_id = s.session_id
-      AND t.insert_time = s.insert_time
-      AND t.session_start_time >= session_start_time_checkpoint
-      WHEN MATCHED THEN
-      UPDATE SET
-        t.session_start_time = s.session_start_time;`,
-        ``
-    )
-  }
 
 }
 

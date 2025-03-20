@@ -7,6 +7,27 @@ config {
     },
     uniqueKey: ["session_id","response_id"],
     description: "Additional Transcript Transformations",
+    columns: {
+      session_start_time: "The time at which a session starts",
+      session_id: "The fully qualified unique ID for the session",
+      response_id: "The unique ID associated with the response from the agent",
+      request_time: "The time of the conversational turn",
+      insert_time: "The UTC timestamp of when the record was inserted to the source table",
+      consolidated_user_utterance: "The user's utterance at turn level, including DTMF inputs if any",
+      contain_ai_generated_content: "Boolean indicator if the agent response contained AI-generated content",
+      contain_attempted_data_store_interactions: "Boolean indicator if the agent response contained attempted data store interactions",
+      contain_data_store_content: "Boolean indicator if the agent response contained data store content",
+      contain_data_store_faq_content: "Boolean indicator if the agent response contained data store FAQ content",
+      contain_generators_content: "Boolean indicator if the agent response contained generators content",
+      contain_generative_fallback: "Boolean indicator if the agent response contained generative fallback",
+      contain_playbook: "Boolean indicator if the conversation turn involved a playbook",
+      matched_intent: "The human readable name of the matched intent for the user utterance",
+      source_agent_response: "The agent's response in the previous turn of the conversation",
+      source_flow_display_name: "The human readable name of the flow in the previous turn or the source flow for playbook turns",
+      source_page_display_name: "The human readable name of the page in the previous turn or the source page for playbook turns",
+      flow_display_name: "The human readable name of the flow for the current turn, defaulting to 'PLAYBOOK' for playbook turns",
+      page_display_name: "The human readable name of the page for the current turn, defaulting to the playbook name for playbook turns"
+    }
 }
 
 pre_operations {
@@ -24,24 +45,6 @@ pre_operations {
         `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
     }
     );
-
-  ${
-    when(incremental(),
-      `MERGE ${self()} AS t
-      USING (
-          SELECT *
-          FROM ${ref("dfcx_transcript_position")}
-          WHERE insert_time >= insert_time_checkpoint
-        ) AS s
-      ON t.session_id = s.session_id
-      AND t.insert_time = s.insert_time
-      AND t.session_start_time >= session_start_time_checkpoint
-      WHEN MATCHED THEN
-      UPDATE SET
-        t.session_start_time = s.session_start_time;`,
-        ``
-    )
-  }
 
 }
 
@@ -138,7 +141,7 @@ GROUP BY 1,2
     ON dfcx_transcript.session_id = ai_indicators.session_id
     AND dfcx_transcript.response_id = ai_indicators.response_id
 )
-SELECT 
+SELECT
   *
 FROM business_logic
 WHERE TRUE

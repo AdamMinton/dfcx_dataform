@@ -16,7 +16,7 @@ pre_operations {
             `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
     }
     );
-  DECLARE 
+  DECLARE
     session_start_time_checkpoint DEFAULT (
     ${
         when(incremental(),
@@ -27,9 +27,9 @@ pre_operations {
 
   ${
     when(incremental(),
-      `MERGE ${self()} AS t 
-      USING ( 
-          SELECT *  
+      `MERGE ${self()} AS t
+      USING (
+          SELECT *
           FROM ${ref("dfcx_transcript_position")}
           WHERE insert_time >= insert_time_checkpoint
         ) AS s
@@ -46,38 +46,40 @@ pre_operations {
 }
 
 WITH
-extract_status_values AS (
+  extract_status_values AS (
   SELECT
-    session_start_time,
-    session_id,
-    response_id,
-    request_time,
-    insert_time,
-    step,
-    JSON_VALUE(session_parameters_updated,'$.status') AS status
+      session_start_time
+    , session_id
+    , response_id
+    , request_time
+    , insert_time
+    , step
+    , JSON_VALUE(session_parameters_updated,'$.status') AS status
   FROM ${ref("dfcx_transcript")} AS dfcx_transcript
     INNER JOIN UNNEST(dfcx_transcript.webhooks) AS webhook
   WHERE TRUE
     AND insert_time > insert_time_checkpoint
     AND session_start_time >= session_start_time_checkpoint
-),
-determine_success AS (
+)
+, determine_success AS (
   SELECT
-    *,
-    CASE WHEN REGEXP_CONTAINS(LOWER(status),r'failure|false') THEN FALSE
+      *
+    , CASE
+      WHEN REGEXP_CONTAINS(LOWER(status),r'failure|false') THEN FALSE
       WHEN status IS NOT NULL THEN TRUE
       ELSE NULL END AS status_did_pass
   FROM extract_status_values
-  WHERE TRUE  
-),
-final_flag AS (
+  WHERE TRUE
+)
+, final_flag AS (
   SELECT
-    *,
-    CASE WHEN status_did_pass = FALSE THEN FALSE ELSE TRUE END as did_row_pass
+      *
+    , CASE
+      WHEN status_did_pass = FALSE THEN FALSE ELSE TRUE END as did_row_pass
   FROM
     determine_success
   WHERE TRUE
 )
 SELECT
-  *
+    *
 FROM final_flag

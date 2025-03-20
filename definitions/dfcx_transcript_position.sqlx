@@ -1,19 +1,19 @@
 config {
-  type: "incremental",
-  bigquery: {
-    partitionBy: "TIMESTAMP_TRUNC(insert_time, DAY)",
-    updatePartitionFilter: "insert_time >= update_partition_checkpoint",
-    requirePartitionFilter : true
-  },
-  uniqueKey: ["session_id","insert_time"],
-  description: "ELT assistance table to create new position and session start time",
-  columns: {
-    session_start_time: "The time at which a session starts",
-    session_id: "The fully qualified unique ID for the session",
-    request_time: "The time of the conversational turn",
-    insert_time: "The UTC timestamp of when the record was inserted to the source table",
-    position: "The conversational turn number",
-  }
+    type: "incremental",
+    bigquery: {
+        partitionBy: "TIMESTAMP_TRUNC(insert_time, DAY)",
+        updatePartitionFilter: "insert_time >= update_partition_checkpoint",
+        requirePartitionFilter : true
+    },
+    uniqueKey: ["session_id","insert_time"],
+    description: "ELT assistance table to create new position and session start time",
+    columns: {
+        session_start_time: "The time at which a session starts",
+        session_id: "The fully qualified unique ID for the session",
+        request_time: "The time of the conversational turn",
+        insert_time: "The UTC timestamp of when the record was inserted to the source table",
+        position: "The conversational turn number",
+    }
 }
 
 pre_operations {
@@ -34,23 +34,23 @@ pre_operations {
 }
 
 WITH
-recent_insert_data AS (
+  recent_insert_data AS (
   SELECT
-    ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] AS session_id
-    ,request_time
-    ,insert_time
+      ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] AS session_id
+    , request_time
+    , insert_time
   FROM
     `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` AS dfcx
   WHERE TRUE
     AND insert_time > insert_time_checkpoint
   GROUP BY 1,2,3
 )
-,all_session_records AS (
-  SELECT 
-    session_id
-    ,request_time
-    ,insert_time
-    ,position
+, all_session_records AS (
+  SELECT
+      session_id
+    , request_time
+    , insert_time
+    , position
   FROM
     ${when(incremental(),
       `${self()}`,
@@ -58,18 +58,22 @@ recent_insert_data AS (
     }
   WHERE TRUE
     AND insert_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL ${dataform.projectConfig.vars.sessionMaxSeconds} SECOND)
-    AND session_id IN (SELECT session_id FROM recent_insert_data) 
+    AND session_id IN (SELECT session_id FROM recent_insert_data)
   GROUP BY 1,2,3,4
 )
-,union_distinct AS (
-  SELECT 
-    session_id
-    ,request_time
-    ,insert_time
-    ,position
+, union_distinct AS (
+  SELECT
+      session_id
+    , request_time
+    , insert_time
+    , position
   FROM
   (
-    SELECT session_id, request_time, insert_time, 0 as position
+    SELECT
+        session_id
+      , request_time
+      , insert_time
+      , 0 as position
     FROM recent_insert_data
       ${when(incremental(),
         `UNION DISTINCT SELECT session_id, request_time, insert_time, position FROM all_session_records`,
@@ -78,25 +82,26 @@ recent_insert_data AS (
   )
   GROUP BY 1,2,3,4
 )
-,session_start_time AS (
+, session_start_time AS (
   SELECT
-    session_id
-    ,MIN(request_time) AS session_start_time
+      session_id
+    , MIN(request_time) AS session_start_time
   FROM union_distinct
   GROUP BY 1
 )
-,ranking_position AS (
+, ranking_position AS (
   SELECT
-    session_start_time.session_start_time,
-    union_distinct.session_id,
-    union_distinct.request_time,
-    union_distinct.insert_time,
-    ROW_NUMBER() OVER (PARTITION BY union_distinct.session_id ORDER BY union_distinct.request_time ASC) AS position
+      session_start_time.session_start_time
+    , union_distinct.session_id
+    , union_distinct.request_time
+    , union_distinct.insert_time
+    , ROW_NUMBER() OVER (PARTITION BY union_distinct.session_id ORDER BY union_distinct.request_time ASC) AS position
   FROM union_distinct
     LEFT JOIN session_start_time
       USING (session_id)
 )
-SELECT ranking_position.*
+SELECT
+    ranking_position.*
 FROM ranking_position
   LEFT JOIN union_distinct
     USING (session_id, insert_time)

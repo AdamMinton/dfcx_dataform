@@ -1,176 +1,210 @@
 config {
     type: "incremental",
     bigquery: {
-      partitionBy: "TIMESTAMP_TRUNC(session_start_time, HOUR)",
-      updatePartitionFilter: "session_start_time >= TIMESTAMP_SUB(session_start_time_checkpoint, INTERVAL 1 HOUR)",
+      partitionBy: "TIMESTAMP_TRUNC(session_start_time, DAY)",
+      updatePartitionFilter: "session_start_time >= session_start_time_checkpoint",
       requirePartitionFilter : true
     },
     uniqueKey: ["session_id"],
     description: "DFCX session summary information",
+    columns: {
+      session_start_time: "The time at which a session started",
+      session_id: "The unique identifier for the session",
+      project_id: "The GCP project ID where the DFCX agent is deployed",
+      agent_id: "The user-provided identifier for the agent",
+      location: "The GCP project location of the DFCX agent",
+      session_end_time: "The time at which the session ended",
+      final_message: {
+        description: "Details of the final message in the session",
+        columns: {
+          match_type: "The intent or playbook match type of the final message",
+          source_page_display_name: "The display name of the source page for the final message",
+          source_flow_display_name: "The display name of the source flow for the final message",
+          flow_display_name: "The display name of the flow for the final message",
+          page_display_name: "The display name of the page for the final message",
+          intent_display_name: "The display name of the intent for the final message"
+        }
+      },
+      final_interaction_head_intent: "The head intent of the final interaction in the session",
+      final_action: "The final action taken in the session",
+      final_action_started: "Boolean indicating if the final action was started",
+      final_action_ended: "Boolean indicating if the final action was ended",
+      final_action_primary_flow: "The primary flow associated with the final action",
+      number_of_turns: "The total number of turns in the session",
+      final_language_code: "The language code of the final turn in the session",
+      logs_explorer_url: "URL to the Google Cloud Logs Explorer filtered to the session",
+      dfcx_url: "URL to the Dialogflow CX console for the session",
+      session_outcome: "The determined outcome of the session, currently defaulted to 'ESCALATED'",
+      latest_insert_time: "The timestamp of the latest insert for this session record"
+    }
 }
-
-WITH
-  dfcx_transcript AS (
-  SELECT
-    session_id,
-    project_id,
-    agent_id,
-    location,
-    session_start_time,
-    request_time,
-    language_code,
-    LAST_VALUE(language_code IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY request_time ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_language_code,
-    position,
-    insert_time
-  FROM
-    ${ref("dfcx_transcript")} AS dfcx_transcript
-  WHERE TRUE
-    AND dfcx_transcript.session_start_time >= session_start_time_checkpoint
-  ),
-  session_info as (
-    SELECT 
-      session_id,
-      project_id,
-      agent_id,
-      location,
-      session_start_time,
-      MAX(request_time) as session_end_time,
-      COUNT(*) AS number_of_turns,
-      MAX(position) as exit_position,
-      COALESCE(MAX(final_language_code),'en-us') as final_language_code,
-      MAX(insert_time) as latest_insert_time
-    FROM dfcx_transcript
-    GROUP BY 1,2,3,4,5
-  ),
-  dfcx_interaction AS (
-  SELECT
-    session_id,
-    interaction_position,
-    interaction_position_reverse,
-    interaction_head_intent,
-    start_interaction_position,
-    end_interaction_position,
-    (SELECT MAX(action_started) FROM UNNEST(actions) WHERE primary_action = TRUE) AS any_started_action,
-    LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) AS lag_01_interaction_head_intent,
-    IF(LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) = interaction_head_intent, FALSE, TRUE) AS change_from_previous_head_intent,
-    final_message,
-    actions
-  FROM
-    ${ref("dfcx_interaction")} as dfcx_interaction
-  WHERE TRUE
-    AND dfcx_interaction.session_start_time >= session_start_time_checkpoint
-  ),
-  removing_non_unique AS (
-  SELECT
-    session_id,
-    interaction_position,
-    interaction_head_intent,
-    actions.*,
-    ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY primary_action DESC
-      --primary actions first
-      , interaction_position DESC
-      --latest interaction first
-      , action_started DESC
-      --latest action started
-      ) AS ranking
-  FROM
-    dfcx_interaction,
-    UNNEST(actions) AS actions
-  WHERE
-    any_started_action = TRUE
-    AND change_from_previous_head_intent = TRUE ),
-  finding_not_started AS (
-  SELECT
-    session_id,
-    interaction_position,
-    interaction_head_intent,
-    actions.*,
-    ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY primary_action DESC
-      --primary actions first
-      , interaction_position DESC
-      --latest interaction first
-      , action_started DESC
-      --latest action started
-      ) AS ranking
-  FROM
-    dfcx_interaction,
-    UNNEST(actions) AS actions
-  WHERE
-    session_id NOT IN (
-    SELECT
-      session_id
-    FROM
-      removing_non_unique) ),
-  final_message AS (
-  SELECT
-    session_id,
-    final_message
-  FROM dfcx_interaction
-  WHERE
-    interaction_position_reverse = 1 ),
-  union_actions AS (
-  SELECT
-    session_id,
-    COALESCE(interaction_head_intent,'Unidentified') AS final_interaction_head_intent,
-    action,
-    action_started,
-    action_started_position,
-    action_ended,
-    action_ended_position,
-    primary_flow
-  FROM
-    removing_non_unique
-  WHERE
-    ranking = 1
-  UNION ALL
-  SELECT
-    session_id,
-    COALESCE(interaction_head_intent,'Unidentified') AS final_interaction_head_intent,
-    'NO SELF SERVICE' AS action,
-    action_started,
-    action_started_position,
-    action_ended,
-    action_ended_position,
-    'Steering' AS primary_flow
-  FROM
-    finding_not_started
-  WHERE
-    ranking = 1 )
-SELECT
-  session_info.session_start_time,
-  session_info.session_id,
-  session_info.project_id,
-  session_info.agent_id,
-  session_info.location,
-  session_info.session_end_time,
-  final_message.final_message,
-  union_actions.final_interaction_head_intent,
-  union_actions.action AS final_action,
-  union_actions.action_started AS final_action_started,
-  union_actions.action_ended AS final_action_ended,
-  union_actions.primary_flow AS final_action_primary_flow,
-  session_info.number_of_turns,
-  session_info.final_language_code,
-  session_info.latest_insert_time
-FROM session_info
-LEFT JOIN final_message USING (session_id)
-LEFT JOIN union_actions USING (session_id)
 
 pre_operations {
   DECLARE
     insert_time_checkpoint DEFAULT (
     ${
         when(incremental(),
-            `SELECT COALESCE(MAX(latest_insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
+            `SELECT COALESCE(MAX(latest_insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.checkpointSeconds} SECOND)`,
+            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
     }
     );
-  DECLARE 
+  DECLARE
     session_start_time_checkpoint DEFAULT (
     ${
         when(incremental(),
-            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 36 HOUR) AND insert_time > insert_time_checkpoint`,
-            `SELECT TIMESTAMP(${dataform.projectConfig.vars.backfillDate})`)
+            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.checkpointSeconds} SECOND) AND insert_time > insert_time_checkpoint`,
+            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
     }
-    )
+    );
+
 }
+
+WITH
+  dfcx_transcript AS (
+  SELECT
+      session_id
+    , project_id
+    , agent_id
+    , location
+    , session_start_time
+    , request_time
+    , language_code
+    , LAST_VALUE(language_code IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY request_time ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS final_language_code
+    , position
+    , insert_time
+  FROM
+    ${ref("dfcx_transcript")} AS dfcx_transcript
+  WHERE TRUE
+    AND dfcx_transcript.session_start_time >= session_start_time_checkpoint
+)
+, session_info as (
+  SELECT
+      session_id
+    , project_id
+    , agent_id
+    , location
+    , session_start_time
+    , MAX(request_time) as session_end_time
+    , COUNT(*) AS number_of_turns
+    , MAX(position) as exit_position
+    , COALESCE(MAX(final_language_code),'en-us') as final_language_code
+    , MAX(insert_time) as latest_insert_time
+  FROM dfcx_transcript
+  GROUP BY 1,2,3,4,5
+)
+, dfcx_interaction AS (
+  SELECT
+      session_id
+    , interaction_position
+    , interaction_position_reverse
+    , interaction_head_intent
+    , start_interaction_position
+    , end_interaction_position
+    , (SELECT MAX(action_started) FROM UNNEST(actions) WHERE primary_action = TRUE) AS any_started_action
+    , LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) AS lag_01_interaction_head_intent
+    , IF(LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) = interaction_head_intent, FALSE, TRUE) AS change_from_previous_head_intent
+    , final_message
+    , actions
+  FROM
+    ${ref("dfcx_interaction")} as dfcx_interaction
+  WHERE TRUE
+    AND dfcx_interaction.session_start_time >= session_start_time_checkpoint
+)
+, removing_non_unique AS (
+  SELECT
+      session_id
+    , interaction_position
+    , interaction_head_intent
+    , actions.*
+    , ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY primary_action DESC
+      --primary actions first
+      , interaction_position DESC
+      --latest interaction first
+      , action_started DESC
+      --latest action started
+      ) AS ranking
+  FROM
+    dfcx_interaction
+    , UNNEST(actions) AS actions
+  WHERE
+    any_started_action = TRUE
+    AND change_from_previous_head_intent = TRUE )
+, finding_not_started AS (
+  SELECT
+      session_id
+    , interaction_position
+    , interaction_head_intent
+    , actions.*
+    , ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY primary_action DESC
+      --primary actions first
+      , interaction_position DESC
+      --latest interaction first
+      , action_started DESC
+      --latest action started
+      ) AS ranking
+  FROM
+    dfcx_interaction
+    , UNNEST(actions) AS actions
+  WHERE
+    session_id NOT IN (
+    SELECT
+        session_id
+    FROM
+      removing_non_unique) )
+, final_message AS (
+  SELECT
+      session_id
+    , final_message
+  FROM dfcx_interaction
+  WHERE
+    interaction_position_reverse = 1 )
+, union_actions AS (
+  SELECT
+      session_id
+    , COALESCE(interaction_head_intent,'Unidentified') AS final_interaction_head_intent
+    , action
+    , action_started
+    , action_started_position
+    , action_ended
+    , action_ended_position
+    , primary_flow
+  FROM
+    removing_non_unique
+  WHERE
+    ranking = 1
+  UNION ALL
+  SELECT
+      session_id
+    , COALESCE(interaction_head_intent,'Unidentified') AS final_interaction_head_intent
+    , 'NO SELF SERVICE' AS action
+    , action_started
+    , action_started_position
+    , action_ended
+    , action_ended_position
+    , 'Steering' AS primary_flow
+  FROM
+    finding_not_started
+  WHERE
+    ranking = 1 )
+SELECT
+    session_info.session_start_time
+  , session_info.session_id
+  , session_info.project_id
+  , session_info.agent_id
+  , session_info.location
+  , session_info.session_end_time
+  , final_message.final_message
+  , union_actions.final_interaction_head_intent
+  , union_actions.action AS final_action
+  , union_actions.action_started AS final_action_started
+  , union_actions.action_ended AS final_action_ended
+  , union_actions.primary_flow AS final_action_primary_flow
+  , session_info.number_of_turns
+  , session_info.final_language_code
+  , CONCAT( 'https://console.cloud.google.com/logs/query;', 'query=resource.type%3D%22global%22%0Aresource.labels.project_id%3D%22', project_id, '%22%0Alabels.session_id%3D%22', session_id, '%22;', 'timeRange=', FORMAT_DATETIME( '%Y-%m-%dT%H:%M:%S.000Z', DATETIME(session_start_time, 'UTC')), '%2F', FORMAT_DATETIME( '%Y-%m-%dT%H:%M:%S.000Z', DATETIME(session_start_time, 'UTC')), '--PT15M;', '?', 'project=', project_id) AS logs_explorer_url
+  , CONCAT( 'https://dialogflow.cloud.google.com/cx/projects/',project_id,'/locations/',location,'/agents/',agent_id,'/conversations/',session_id) AS dfcx_url
+  , 'ESCALATED' as session_outcome
+  , session_info.latest_insert_time
+FROM session_info
+LEFT JOIN final_message USING (session_id)
+LEFT JOIN union_actions USING (session_id)

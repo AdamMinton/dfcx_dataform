@@ -66,21 +66,19 @@ WITH
       session_id
     , request_time
     , insert_time
-    , position
   FROM
   (
     SELECT
         session_id
       , request_time
       , insert_time
-      , 0 as position
     FROM recent_insert_data
       ${when(incremental(),
-        `UNION DISTINCT SELECT session_id, request_time, insert_time, position FROM all_session_records`,
+        `UNION DISTINCT SELECT session_id, request_time, insert_time FROM all_session_records`,
         ``)
       }
   )
-  GROUP BY 1,2,3,4
+  GROUP BY 1,2,3
 )
 , session_start_time AS (
   SELECT
@@ -103,10 +101,10 @@ WITH
 SELECT
     ranking_position.*
 FROM ranking_position
-  LEFT JOIN union_distinct
+  LEFT JOIN all_session_records
     USING (session_id, insert_time)
 WHERE TRUE
   AND (
-    union_distinct.position IS NULL --completely new row
-    OR union_distinct.position <> ranking_position.position --ranking changed
+    all_session_records.position IS NULL --completely new row
+    OR all_session_records.position <> ranking_position.position --ranking changed
   )

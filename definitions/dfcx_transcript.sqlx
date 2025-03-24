@@ -492,13 +492,6 @@ WITH
       LEFT JOIN ${ref("action_id_decoder")} AS action_id_decoder
         ON COALESCE( ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) = action_id_decoder.action_id
     WHERE TRUE
-      AND (COALESCE(
-        JSON_VALUE(action,'$.playbookInvocation.playbookState'),
-        JSON_VALUE(action,'$.flowInvocation.flowState')
-      ) IS NULL OR COALESCE(
-        JSON_VALUE(action,'$.playbookInvocation.playbookState'),
-        JSON_VALUE(action,'$.flowInvocation.flowState')
-      ) IN ('OUTPUT_STATE_OK'))
       AND CASE
           WHEN JSON_EXTRACT(action,'$.toolUse') IS NOT NULL THEN 'toolUse'
           WHEN JSON_EXTRACT(action,'$.playbookInvocation') IS NOT NULL THEN 'playbookInvocation'

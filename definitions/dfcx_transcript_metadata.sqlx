@@ -13,7 +13,6 @@ config {
       response_id: "The unique ID associated with the response from the agent",
       request_time: "The time of the conversational turn",
       insert_time: "The UTC timestamp of when the record was inserted to the source table",
-      consolidated_user_utterance: "The user's utterance at turn level, including DTMF inputs if any",
       contain_ai_generated_content: "Boolean indicator if the agent response contained AI-generated content",
       contain_attempted_data_store_interactions: "Boolean indicator if the agent response contained attempted data store interactions",
       contain_data_store_content: "Boolean indicator if the agent response contained data store content",
@@ -46,6 +45,24 @@ pre_operations {
     }
     );
 
+  ${
+    when(incremental(),
+      `MERGE ${self()} AS t
+      USING (
+          SELECT *
+          FROM ${ref("dfcx_transcript_position")}
+          WHERE insert_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL (${dataform.projectConfig.vars.insertDelaySeconds} + ${dataform.projectConfig.vars.sessionMaxSeconds}) SECOND)
+        ) AS s
+      ON t.session_id = s.session_id
+      AND t.insert_time = s.insert_time
+      AND t.session_start_time >= TIMESTAMP_SUB(session_start_time_checkpoint, INTERVAL (${dataform.projectConfig.vars.insertDelaySeconds} + ${dataform.projectConfig.vars.sessionMaxSeconds}) SECOND) 
+      WHEN MATCHED THEN
+      UPDATE SET
+        t.session_start_time = s.session_start_time;`,
+        ``
+    )
+  }
+
 }
 
 
@@ -57,7 +74,6 @@ WITH
     , response_id
     , request_time
     , insert_time
-    , CASE WHEN optional_dtmf_digits IS NOT NULL THEN IF (user_utterance LIKE 'dtmf%','(dtmf) ' || user_utterance,'(dtmf) ' || optional_dtmf_digits) ELSE user_utterance END AS consolidated_user_utterance
     , match_type
     , execution_sequence
     , actions
@@ -112,7 +128,6 @@ GROUP BY 1,2
     , dfcx_transcript.response_id
     , dfcx_transcript.request_time
     , dfcx_transcript.insert_time
-    , dfcx_transcript.consolidated_user_utterance
     , COALESCE(ai_indicators.contain_ai_generated_content, FALSE) AS contain_ai_generated_content
     , COALESCE(ai_indicators.contain_attempted_data_store_interactions, FALSE) as contain_attempted_data_store_interactions
     , COALESCE(ai_indicators.contain_data_store_content, FALSE) as contain_data_store_content

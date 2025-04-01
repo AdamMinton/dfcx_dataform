@@ -42,11 +42,11 @@ pre_operations {
       USING (
           SELECT *
           FROM ${ref("dfcx_transcript_position")}
-          WHERE insert_time >= insert_time_checkpoint
+          WHERE insert_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL (${dataform.projectConfig.vars.insertDelaySeconds} + ${dataform.projectConfig.vars.sessionMaxSeconds}) SECOND)
         ) AS s
       ON t.session_id = s.session_id
       AND t.insert_time = s.insert_time
-      AND t.session_start_time >= session_start_time_checkpoint
+      AND t.session_start_time >= TIMESTAMP_SUB(session_start_time_checkpoint, INTERVAL (${dataform.projectConfig.vars.insertDelaySeconds} + ${dataform.projectConfig.vars.sessionMaxSeconds}) SECOND) 
       WHEN MATCHED THEN
       UPDATE SET
         t.session_start_time = s.session_start_time;`,

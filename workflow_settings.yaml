@@ -3,7 +3,6 @@ defaultLocation: US
 defaultDataset: dataform_ccai
 defaultAssertionDataset: dataform_assertions
 dataformCoreVersion: 3.0.0-beta.4
-datasetSuffix: development
 vars:
   dialogflowExport: insights_demo.dialogflow_bigquery_export_data
   backfillTimestamp: TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 4000 DAY)

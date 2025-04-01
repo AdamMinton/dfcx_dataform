@@ -485,20 +485,13 @@ WITH
       ,COALESCE(ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) AS action_id
       ,COALESCE(JSON_VALUE(action,'$.toolUse.action'),action_id_decoder.action_name) AS action_name
       ,COALESCE(JSON_VALUE(action,'$.toolUse.toolState'),JSON_VALUE(action,'$.playbookInvocation.playbookState'),JSON_VALUE(action,'$.flowInvocation.flowState')) AS action_state
-      ,COALESCE(JSON_QUERY(action,'$.toolUse.inputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookInput'),JSON_QUERY(action,'$.flowInvocation.inputActionParameters')) as action_input
-      ,COALESCE(JSON_QUERY(action,'$.toolUse.outputParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookOutput'),JSON_QUERY(action,'$.flowInvocation.outputActionParameters')) as action_output
+      ,COALESCE(JSON_QUERY(action,'$.toolUse.inputActionParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookInput'),JSON_QUERY(action,'$.flowInvocation.inputActionParameters')) as action_input
+      ,COALESCE(JSON_QUERY(action,'$.toolUse.outputActionParameters'),JSON_QUERY(action,'$.playbookInvocation.playbookOutput'),JSON_QUERY(action,'$.flowInvocation.outputActionParameters')) as action_output
     FROM base_data
       LEFT JOIN UNNEST(actions) as action WITH OFFSET as action_step
       LEFT JOIN ${ref("action_id_decoder")} AS action_id_decoder
         ON COALESCE( ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.toolUse.tool'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.playbookInvocation.playbook'),'/'))[SAFE_OFFSET(0)],ARRAY_REVERSE(SPLIT(JSON_VALUE(action,'$.flowInvocation.flow'),'/'))[SAFE_OFFSET(0)] ) = action_id_decoder.action_id
     WHERE TRUE
-      AND (COALESCE(
-        JSON_VALUE(action,'$.playbookInvocation.playbookState'),
-        JSON_VALUE(action,'$.flowInvocation.flowState')
-      ) IS NULL OR COALESCE(
-        JSON_VALUE(action,'$.playbookInvocation.playbookState'),
-        JSON_VALUE(action,'$.flowInvocation.flowState')
-      ) IN ('OUTPUT_STATE_OK'))
       AND CASE
           WHEN JSON_EXTRACT(action,'$.toolUse') IS NOT NULL THEN 'toolUse'
           WHEN JSON_EXTRACT(action,'$.playbookInvocation') IS NOT NULL THEN 'playbookInvocation'

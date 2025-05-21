@@ -130,6 +130,31 @@ config {
           states: "The multiple states associated with the playbook execution",
         }
       },
+      trace_block: {
+        description: "The individual processing steps through flows, pages, and playbooks",
+        columns: {
+          step: "Refers to a single block that occurs during a conversation turn",
+          trace_block_action: {
+            description: "Refers to a single action within a block that occurs during a conversation turn",
+            columns: {
+              step: "Refers to a single action within a block that occurs during a conversation turn",
+              type: "Type of action that is traced",
+              name: "Name of block that is traced",
+              start_time: "Time the block started",
+              complete_time: "Time the block completed",
+              execution_steps: {
+                description: "Refers to a single action within an action that occurs during a conversation turn",
+                columns: {
+                  step: "Refers to a single action within an action that occurs during a conversation turn",
+                  name: "Name of the action that is traced",
+                  start_time: "Time the action started",
+                  complete_time: "Time the action completed",
+                }
+              }
+            }
+          }
+        }
+      },
       insert_time: "The UTC timestamp of when the record was inserted to the source table"
     }
 }
@@ -142,26 +167,6 @@ pre_operations {
           `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
     }
     );
-
-  ${
-    when(incremental(),
-      `MERGE ${self()} AS t
-      USING (
-          SELECT *
-          FROM ${ref("dfcx_transcript_position")}
-          WHERE insert_time >= insert_time_checkpoint
-        ) AS s
-      ON t.session_id = s.session_id
-      AND t.insert_time = s.insert_time
-      AND t.session_start_time >= insert_time_checkpoint
-
-      WHEN MATCHED THEN
-      UPDATE SET
-        t.session_start_time = s.session_start_time,
-        t.position = s.position;`,
-        ``
-    )
-  }
 
   CREATE TEMP FUNCTION extract_matched_intent_parameters(jsonObject JSON)
   RETURNS ARRAY<STRUCT<session_parameter STRING, original STRING, resolved ARRAY<STRING>, entity_type STRING>>
@@ -229,6 +234,7 @@ WITH
     , JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Execution Sequence') AS execution_sequence
     , dfcx.language_code
     , JSON_VALUE(dfcx.request,'$.queryInput.event.event') AS event
+    , JSON_QUERY_ARRAY(dfcx.partial_responses,'$.v3PartialResponses') as partial_responses
     , JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.responseMessages') AS response_messages
     , JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Alternative Matched Intents') AS alternative_matched_intents
     , JSON_VALUE(dfcx.derived_data,'$.agentUtterances') as agent_response
@@ -285,6 +291,7 @@ WITH
           FROM UNNEST(JSON_EXTRACT_ARRAY(response,'$.features')) AS a
           WHERE JSON_VALUE(a,'$.feature')='PLAYBOOK') AS states
       ) AS playbook_metrics
+    , JSON_QUERY_ARRAY(response,'$.queryResult.traceBlocks') as trace_blocks
   FROM `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` AS dfcx
     INNER JOIN ${ref("dfcx_transcript_position")} as dfcx_position
       ON ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] = dfcx_position.session_id
@@ -533,6 +540,82 @@ WITH
       ,ARRAY_AGG(STRUCT(playbook_step,playbook_id,playbook_name )) AS playbooks
     FROM playbooks
     GROUP BY 1,2 )
+  , trace_blocks_unnest AS (
+    SELECT 
+      session_id,
+      response_id,
+      trace_block_step + 1 AS trace_block_step,
+      trace_block,
+      trace_block_action_step + 1 AS trace_block_action_step,
+      trace_block_action,
+      (SELECT ARRAY_AGG(json_key) FROM UNNEST(JSON_KEYS(trace_block_action)) as json_key WHERE json_key NOT IN ('completeTime','startTime','subExecutionSteps','displayName') AND json_key NOT LIKE '%.%')[SAFE_OFFSET(0)] as trace_block_action_type,
+      JSON_VALUE(trace_block_action, '$.displayName') as trace_block_action_name,
+      TIMESTAMP_MICROS(
+        SAFE_CAST(JSON_VALUE(trace_block_action, '$.startTime.seconds') AS INT64) * 1000000
+        + SAFE_CAST(CAST(JSON_VALUE(trace_block_action, '$.startTime.nanos') AS INT64) / 1000 AS INT64)
+      ) AS trace_block_start_time,
+      TIMESTAMP_MICROS(
+        SAFE_CAST(JSON_VALUE(trace_block_action, '$.completeTime.seconds') AS INT64) * 1000000
+        + SAFE_CAST(CAST(JSON_VALUE(trace_block_action, '$.completeTime.nanos') AS INT64) / 1000 AS INT64)
+      ) AS trace_block_complete_time,
+      (SELECT ARRAY_AGG(
+            STRUCT(
+              trace_block_action_sub_execution_step + 1 as step,
+              JSON_VALUE(trace_block_action_sub_execution,'$.name') as name,
+              TIMESTAMP_MICROS(
+                SAFE_CAST(JSON_VALUE(trace_block_action_sub_execution, '$.startTime.seconds') AS INT64) * 1000000
+                + SAFE_CAST(CAST(JSON_VALUE(trace_block_action_sub_execution, '$.startTime.nanos') AS INT64) / 1000 AS INT64)
+              ) AS start_time,
+              TIMESTAMP_MICROS(
+                SAFE_CAST(JSON_VALUE(trace_block_action_sub_execution, '$.completeTime.seconds') AS INT64) * 1000000
+                + SAFE_CAST(CAST(JSON_VALUE(trace_block_action_sub_execution, '$.completeTime.nanos') AS INT64) / 1000 AS INT64)
+              ) AS complete_time
+            ) ORDER BY trace_block_action_sub_execution_step)
+        FROM UNNEST(JSON_QUERY_ARRAY(trace_block_action,'$.subExecutionSteps')) AS trace_block_action_sub_execution 
+          WITH OFFSET as trace_block_action_sub_execution_step
+      ) as trace_block_action_execution_steps
+    FROM base_data
+      INNER JOIN UNNEST(trace_blocks) as trace_block WITH OFFSET AS trace_block_step 
+      INNER JOIN UNNEST(JSON_QUERY_ARRAY(trace_block,'$.actions')) as trace_block_action WITH OFFSET as trace_block_action_step )
+  , trace_block_actions_agg AS (
+    SELECT 
+      session_id,
+      response_id,
+      trace_block_step,
+      ARRAY_AGG(
+        STRUCT(
+          trace_block_action_step as step,
+          trace_block_action_type as type,
+          trace_block_action_name as name,
+          trace_block_start_time as start_time,
+          trace_block_complete_time as complete_time,
+          trace_block_action_execution_steps as execution_steps
+        )
+      ORDER BY trace_block_action_step) as trace_block_action
+    FROM trace_blocks_unnest
+    GROUP BY 1,2,3 )
+  , trace_blocks_agg AS (
+    SELECT 
+      session_id,
+      response_id,
+      ARRAY_AGG(
+        STRUCT(
+          trace_block_step as step,
+          trace_block_action
+        )
+      ORDER BY trace_block_step) as trace_block
+    FROM trace_block_actions_agg
+    GROUP BY 1,2 )
+  , partial_responses_agent_response AS (
+    SELECT 
+      session_id,
+      response_id,
+      STRING_AGG(JSON_VALUE(agent_text,'$'), '\n' ORDER BY partial_response_offset, response_message_offset, agent_text_offset) AS aggregated_agent_text
+    FROM base_data
+      ,UNNEST(base_data.partial_responses) as partial_response WITH OFFSET AS partial_response_offset
+      ,UNNEST(JSON_QUERY_ARRAY(partial_response,'$.queryResult.responseMessages')) as response_message WITH OFFSET AS response_message_offset
+      ,UNNEST(JSON_QUERY_ARRAY(response_message,'$.text.text')) as agent_text WITH OFFSET AS agent_text_offset
+    GROUP BY 1,2 )
 SELECT
     base_data.project_id
   , base_data.location
@@ -544,7 +627,7 @@ SELECT
   , base_data.position
   , base_data.user_utterance
   , base_data.optional_dtmf_digits
-  , base_data.agent_response
+  , COALESCE(partial_responses_agent_response.aggregated_agent_text,'') || COALESCE(base_data.agent_response,'') as agent_response
   , source_and_target_page.source_flow_id
   , source_and_target_page.source_flow_display_name
   , source_and_target_page.source_page_id
@@ -570,7 +653,8 @@ SELECT
   , actions_agg.actions
   , playbooks_agg.playbooks
   , base_data.playbook_metrics
-  , base_data.response_messages
+  , ARRAY_CONCAT(COALESCE(base_data.partial_responses,[]),COALESCE(base_data.response_messages,[])) as response_messages
+  , trace_blocks_agg.trace_block
   , base_data.insert_time
 FROM base_data
   LEFT JOIN execution_sequence_agg
@@ -585,3 +669,46 @@ FROM base_data
     USING(session_id,response_id)
   LEFT JOIN playbooks_agg
     USING(session_id,response_id)
+  LEFT JOIN trace_blocks_agg
+    USING(session_id,response_id)
+  LEFT JOIN partial_responses_agent_response
+    USING(session_id,response_id)
+post_operations {
+  -- Step 1: Identify sessions that need fixing
+  CREATE TEMP TABLE sessions_to_fix AS
+  SELECT
+    session_id,
+    ARRAY_AGG(DISTINCT session_start_time ORDER BY session_start_time) AS distinct_start_times,
+    MIN(session_start_time)   AS new_start_time,
+    COUNT(DISTINCT session_start_time) AS num_start_times
+  FROM ${self()}
+  WHERE session_start_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL 3 HOUR)
+  GROUP BY session_id
+  HAVING num_start_times > 1;
+  
+  -- Step 1a: Bail out early if nothing to do
+  IF (SELECT COUNT(*) FROM sessions_to_fix) = 0 THEN
+    RETURN;
+  END IF;
+
+  -- Step 2: Build the full partition list
+  SET part_hours = (
+    SELECT ARRAY_AGG(DISTINCT TIMESTAMP_TRUNC(ts, HOUR))
+    FROM sessions_to_fix, UNNEST(distinct_start_times) AS ts
+  );
+
+  -- Step 3: One partition-filtered UPDATE per hour
+  FOR part_row IN (
+    SELECT ts
+    FROM UNNEST(part_hours) AS ts
+  ) DO
+    SET part_end = TIMESTAMP_ADD(part_row.ts, INTERVAL 1 HOUR);
+
+    UPDATE  ${self()} AS tgt
+    SET     session_start_time = src.new_start_time
+    FROM    sessions_to_fix    AS src
+    WHERE   tgt.session_id         = src.session_id
+      AND   tgt.session_start_time >= part_row.ts
+      AND   tgt.session_start_time <  part_end;
+  END FOR;
+}

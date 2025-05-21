@@ -28,17 +28,6 @@ config {
           primary_flow: "The primary Dialogflow CX flow associated with this action"
         }
      },
-     final_message: {
-       description: "Details of the last message in the interaction",
-       columns: {
-         match_type: "The intent or playbook match associated with the user utterance of the last message",
-         source_page_display_name: "The human readable name of the source page of the last message",
-         source_flow_display_name: "The human readable name of the source flow of the last message",
-         flow_display_name: "The human readable name of the flow of the last message",
-         page_display_name: "The human readable name of the page of the last message",
-         intent_display_name: "The human readable name of the matched intent of the last message"
-       }
-     },
      latest_insert_time: "The timestamp of the latest insert for the session"
    }
 }
@@ -279,73 +268,27 @@ WITH
     AND DATE(unnest_execution_steps.start_interaction_timestamp) BETWEEN valid_from AND valid_to
   GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14
 )
-, last_message_disposition AS (
-  SELECT
-      ss.session_id
-    , ss.interaction_position
-    , t.source_flow_display_name
-    , t.source_page_display_name
-    , t.execution_sequence[SAFE_ORDINAL(IF(ARRAY_LENGTH(t.execution_sequence)=1,1,ARRAY_LENGTH(t.execution_sequence)-1))].flow_display_name AS flow_display_name
-    , t.execution_sequence[SAFE_ORDINAL(IF(ARRAY_LENGTH(t.execution_sequence)=1,1,ARRAY_LENGTH(t.execution_sequence)-1))].page_display_name AS page_display_name
-    , t.intent_display_name
-    , t.match_type
-  FROM checking_self_service AS ss
-    INNER JOIN transcript_processing AS t
-      ON ss.session_id = t.session_id
-      AND ss.end_interaction_position = t.position
-  GROUP BY 1,2,3,4,5,6,7,8
-)
-, composing_table AS (
-  SELECT
-      checking_self_service.session_start_time
-    , checking_self_service.session_id
-    , checking_self_service.interaction_position
-    , checking_self_service.interaction_position_reverse
-    , checking_self_service.interaction_head_intent
-    , checking_self_service.start_interaction_position
-    , checking_self_service.end_interaction_position
-    , last_message.match_type
-    , last_message.source_page_display_name
-    , last_message.source_flow_display_name
-    , last_message.flow_display_name
-    , last_message.page_display_name
-    , last_message.intent_display_name
-    , session_info.latest_insert_time
-    , ARRAY_AGG(STRUCT(
-      checking_self_service.action
-      , checking_self_service.action_type
-      , checking_self_service.primary_action
-      , checking_self_service.action_started
-      , checking_self_service.action_started_position
-      , CASE WHEN checking_self_service.action_started = TRUE THEN checking_self_service.action_ended ELSE FALSE END AS action_ended
-      , checking_self_service.action_ended_position
-      , checking_self_service.primary_flow
-    )) AS actions
-  FROM checking_self_service
-  LEFT JOIN last_message_disposition AS last_message
-    ON checking_self_service.session_id = last_message.session_id
-    AND checking_self_service.interaction_position = last_message.interaction_position
-  LEFT JOIN session_info
-    ON checking_self_service.session_id = session_info.session_id
-  WHERE TRUE
-  GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14
-)
 SELECT
-    session_start_time
-  , session_id
-  , interaction_position
-  , interaction_position_reverse
-  , interaction_head_intent
-  , start_interaction_position
-  , end_interaction_position
-  , actions
-  , STRUCT(
-    match_type
-    , source_page_display_name
-    , source_flow_display_name
-    , flow_display_name
-    , page_display_name
-    , intent_display_name
-  ) as final_message
-  , latest_insert_time
-FROM composing_table
+    checking_self_service.session_start_time
+  , checking_self_service.session_id
+  , checking_self_service.interaction_position
+  , checking_self_service.interaction_position_reverse
+  , checking_self_service.interaction_head_intent
+  , checking_self_service.start_interaction_position
+  , checking_self_service.end_interaction_position
+  , session_info.latest_insert_time
+  , ARRAY_AGG(STRUCT(
+    checking_self_service.action
+    , checking_self_service.action_type
+    , checking_self_service.primary_action
+    , checking_self_service.action_started
+    , checking_self_service.action_started_position
+    , CASE WHEN checking_self_service.action_started = TRUE THEN checking_self_service.action_ended ELSE FALSE END AS action_ended
+    , checking_self_service.action_ended_position
+    , checking_self_service.primary_flow
+  )) AS actions
+FROM checking_self_service
+LEFT JOIN session_info
+  ON checking_self_service.session_id = session_info.session_id
+WHERE TRUE
+GROUP BY 1,2,3,4,5,6,7,8

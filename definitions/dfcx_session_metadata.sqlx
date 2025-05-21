@@ -14,17 +14,6 @@ config {
       agent_id: "The user-provided identifier for the agent",
       location: "The GCP project location of the DFCX agent",
       session_end_time: "The time at which the session ended",
-      final_message: {
-        description: "Details of the final message in the session",
-        columns: {
-          match_type: "The intent or playbook match type of the final message",
-          source_page_display_name: "The display name of the source page for the final message",
-          source_flow_display_name: "The display name of the source flow for the final message",
-          flow_display_name: "The display name of the flow for the final message",
-          page_display_name: "The display name of the page for the final message",
-          intent_display_name: "The display name of the intent for the final message"
-        }
-      },
       final_interaction_head_intent: "The head intent of the final interaction in the session",
       final_action: "The final action taken in the session",
       final_action_started: "Boolean indicating if the final action was started",
@@ -103,7 +92,6 @@ WITH
     , (SELECT MAX(action_started) FROM UNNEST(actions) WHERE primary_action = TRUE) AS any_started_action
     , LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) AS lag_01_interaction_head_intent
     , IF(LAG(interaction_head_intent,1) OVER (PARTITION BY session_id ORDER BY interaction_position ASC) = interaction_head_intent, FALSE, TRUE) AS change_from_previous_head_intent
-    , final_message
     , actions
   FROM
     ${ref("dfcx_interaction")} as dfcx_interaction
@@ -151,13 +139,6 @@ WITH
         session_id
     FROM
       removing_non_unique) )
-, final_message AS (
-  SELECT
-      session_id
-    , final_message
-  FROM dfcx_interaction
-  WHERE
-    interaction_position_reverse = 1 )
 , union_actions AS (
   SELECT
       session_id
@@ -193,7 +174,6 @@ SELECT
   , session_info.agent_id
   , session_info.location
   , session_info.session_end_time
-  , final_message.final_message
   , union_actions.final_interaction_head_intent
   , union_actions.action AS final_action
   , union_actions.action_started AS final_action_started
@@ -206,5 +186,4 @@ SELECT
   , 'ESCALATED' as session_outcome
   , session_info.latest_insert_time
 FROM session_info
-LEFT JOIN final_message USING (session_id)
 LEFT JOIN union_actions USING (session_id)

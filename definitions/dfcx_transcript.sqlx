@@ -231,6 +231,7 @@ WITH
     , JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Execution Sequence') AS execution_sequence
     , dfcx.language_code
     , JSON_VALUE(dfcx.request,'$.queryInput.event.event') AS event
+    , JSON_QUERY_ARRAY(dfcx.partial_responses,'$.v3PartialResponses') as partial_responses
     , JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.responseMessages') AS response_messages
     , JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.diagnosticInfo.Alternative Matched Intents') AS alternative_matched_intents
     , JSON_VALUE(dfcx.derived_data,'$.agentUtterances') as agent_response
@@ -590,6 +591,16 @@ WITH
       ORDER BY trace_block_step) as trace_block
     FROM trace_block_actions_agg
     GROUP BY 1,2 )
+  , partial_responses_agent_response AS (
+    SELECT 
+      session_id,
+      response_id,
+      STRING_AGG(JSON_VALUE(agent_text,'$'), '\n' ORDER BY partial_response_offset, response_message_offset, agent_text_offset) AS aggregated_agent_text
+    FROM base_data
+      ,UNNEST(base_data.partial_responses) as partial_response WITH OFFSET AS partial_response_offset
+      ,UNNEST(JSON_QUERY_ARRAY(partial_response,'$.queryResult.responseMessages')) as response_message WITH OFFSET AS response_message_offset
+      ,UNNEST(JSON_QUERY_ARRAY(response_message,'$.text.text')) as agent_text WITH OFFSET AS agent_text_offset
+    GROUP BY 1,2 )
 SELECT
     base_data.project_id
   , base_data.location
@@ -601,7 +612,7 @@ SELECT
   , base_data.position
   , base_data.user_utterance
   , base_data.optional_dtmf_digits
-  , base_data.agent_response
+  , COALESCE(partial_responses_agent_response.aggregated_agent_text,'') || COALESCE(base_data.agent_response,'') as agent_response
   , source_and_target_page.source_flow_id
   , source_and_target_page.source_flow_display_name
   , source_and_target_page.source_page_id
@@ -627,7 +638,7 @@ SELECT
   , actions_agg.actions
   , playbooks_agg.playbooks
   , base_data.playbook_metrics
-  , base_data.response_messages
+  , ARRAY_CONCAT(COALESCE(base_data.partial_responses,[]),COALESCE(base_data.response_messages,[])) as response_messages
   , trace_blocks_agg.trace_block
   , base_data.insert_time
 FROM base_data
@@ -644,6 +655,8 @@ FROM base_data
   LEFT JOIN playbooks_agg
     USING(session_id,response_id)
   LEFT JOIN trace_blocks_agg
+    USING(session_id,response_id)
+  LEFT JOIN partial_responses_agent_response
     USING(session_id,response_id)
 post_operations {
   -- Step 1: Identify sessions that need fixing

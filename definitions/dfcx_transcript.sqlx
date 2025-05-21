@@ -139,6 +139,9 @@ config {
             columns: {
               step: "Refers to a single action within a block that occurs during a conversation turn",
               type: "Type of action that is traced",
+              name: "Name of block that is traced",
+              start_time: "Time the block started",
+              complete_time: "Time the block completed",
               execution_steps: {
                 description: "Refers to a single action within an action that occurs during a conversation turn",
                 columns: {
@@ -546,6 +549,15 @@ WITH
       trace_block_action_step + 1 AS trace_block_action_step,
       trace_block_action,
       (SELECT ARRAY_AGG(json_key) FROM UNNEST(JSON_KEYS(trace_block_action)) as json_key WHERE json_key NOT IN ('completeTime','startTime','subExecutionSteps','displayName') AND json_key NOT LIKE '%.%')[SAFE_OFFSET(0)] as trace_block_action_type,
+      JSON_VALUE(trace_block_action, '$.displayName') as trace_block_action_name,
+      TIMESTAMP_MICROS(
+        SAFE_CAST(JSON_VALUE(trace_block_action, '$.startTime.seconds') AS INT64) * 1000000
+        + SAFE_CAST(CAST(JSON_VALUE(trace_block_action, '$.startTime.nanos') AS INT64) / 1000 AS INT64)
+      ) AS trace_block_start_time,
+      TIMESTAMP_MICROS(
+        SAFE_CAST(JSON_VALUE(trace_block_action, '$.completeTime.seconds') AS INT64) * 1000000
+        + SAFE_CAST(CAST(JSON_VALUE(trace_block_action, '$.completeTime.nanos') AS INT64) / 1000 AS INT64)
+      ) AS trace_block_complete_time,
       (SELECT ARRAY_AGG(
             STRUCT(
               trace_block_action_sub_execution_step + 1 as step,
@@ -574,6 +586,9 @@ WITH
         STRUCT(
           trace_block_action_step as step,
           trace_block_action_type as type,
+          trace_block_action_name as name,
+          trace_block_start_time as start_time,
+          trace_block_complete_time as complete_time,
           trace_block_action_execution_steps as execution_steps
         )
       ORDER BY trace_block_action_step) as trace_block_action

@@ -130,36 +130,46 @@ config {
           states: "The multiple states associated with the playbook execution",
         }
       },
-      trace_block: {
+      trace: {
         description: "The individual processing steps through flows, pages, and playbooks",
         columns: {
-          step: "Refers to a single block that occurs during a conversation turn",
-          trace_block_action: {
-            description: "Refers to a single action within a block that occurs during a conversation turn",
-            columns: {
-              step: "Refers to a single action within a block that occurs during a conversation turn",
-              type: "Type of action that is traced",
-              name: "Name of block that is traced",
-              start_time: "Time the block started",
-              complete_time: "Time the block completed",
-              execution_steps: {
-                description: "Refers to a single action within an action that occurs during a conversation turn",
+            block_step: "Refers to a single block that occurs during a conversation turn",
+            block_start_time: "Time the block started",
+            block_complete_time: "Time the block completed",
+            block_flow_display_name: "Display name of the flow for the block",
+            block_speech_processing_display_name: "Display name of the speech processing for the block",
+            action: {
+                description: "Refers to a single action within a block that occurs during a conversation turn",
                 columns: {
-                  step: "Refers to a single action within an action that occurs during a conversation turn",
-                  name: "Name of the action that is traced",
-                  start_time: "Time the action started",
-                  complete_time: "Time the action completed",
+                    action_step: "Refers to a single action within a block that occurs during a conversation turn",
+                    action_type: "Type of action that is traced",
+                    action_name: "Name of the action that is traced",
+                    action_start_time: "Time the action started",
+                    action_complete_time: "Time the action completed",
+                    action_page_display_name: "Display name of the page for the action",
+                    action_tool_display_name: "Display name of the tool for the action",
+                    action_webhook_url: "URL of the webhook for the action",
+                    action_webhook_tag: "Tag of the webhook for the action",
+                    action_execution_steps: {
+                        description: "Refers to a single execution step within an action",
+                        columns: {
+                            step: "Refers to a single execution step within an action",
+                            name: "Name of the execution step",
+                            start_time: "Time the execution step started",
+                            complete_time: "Time the execution step completed"
+                        }
+                    }
                 }
-              }
             }
-          }
         }
-      },
+    },
       insert_time: "The UTC timestamp of when the record was inserted to the source table"
     }
 }
 
 pre_operations {
+  DECLARE part_hours ARRAY<TIMESTAMP>;
+  DECLARE part_end TIMESTAMP;
   DECLARE insert_time_checkpoint DEFAULT (
     ${
         when(incremental(),
@@ -540,70 +550,96 @@ WITH
       ,ARRAY_AGG(STRUCT(playbook_step,playbook_id,playbook_name )) AS playbooks
     FROM playbooks
     GROUP BY 1,2 )
-  , trace_blocks_unnest AS (
-    SELECT 
-      session_id,
-      response_id,
-      trace_block_step + 1 AS trace_block_step,
-      trace_block,
-      trace_block_action_step + 1 AS trace_block_action_step,
-      trace_block_action,
-      (SELECT ARRAY_AGG(json_key) FROM UNNEST(JSON_KEYS(trace_block_action)) as json_key WHERE json_key NOT IN ('completeTime','startTime','subExecutionSteps','displayName') AND json_key NOT LIKE '%.%')[SAFE_OFFSET(0)] as trace_block_action_type,
-      JSON_VALUE(trace_block_action, '$.displayName') as trace_block_action_name,
-      TIMESTAMP_MICROS(
-        SAFE_CAST(JSON_VALUE(trace_block_action, '$.startTime.seconds') AS INT64) * 1000000
-        + SAFE_CAST(CAST(JSON_VALUE(trace_block_action, '$.startTime.nanos') AS INT64) / 1000 AS INT64)
-      ) AS trace_block_start_time,
-      TIMESTAMP_MICROS(
-        SAFE_CAST(JSON_VALUE(trace_block_action, '$.completeTime.seconds') AS INT64) * 1000000
-        + SAFE_CAST(CAST(JSON_VALUE(trace_block_action, '$.completeTime.nanos') AS INT64) / 1000 AS INT64)
-      ) AS trace_block_complete_time,
-      (SELECT ARRAY_AGG(
+    , trace_blocks_unnest AS (
+        SELECT 
+        session_id,
+        response_id,
+        trace_block_step + 1 AS block_step,
+        trace_block,
+        TIMESTAMP_MICROS(
+            SAFE_CAST(JSON_VALUE(trace_block, '$.startTime.seconds') AS INT64) * 1000000
+            + SAFE_CAST(CAST(JSON_VALUE(trace_block, '$.startTime.nanos') AS INT64) / 1000 AS INT64)
+        ) AS block_start_time,
+        TIMESTAMP_MICROS(
+            SAFE_CAST(JSON_VALUE(trace_block, '$.completeTime.seconds') AS INT64) * 1000000
+            + SAFE_CAST(CAST(JSON_VALUE(trace_block, '$.completeTime.nanos') AS INT64) / 1000 AS INT64)
+        ) AS block_complete_time,
+        JSON_VALUE(trace_block,'$.flowTraceMetadata.displayName') as block_flow_display_name,
+        JSON_VALUE(trace_block,'$.speechProcessingMetadata.displayName') as block_speech_processing_display_name,
+        trace_block_action_step + 1 AS action_step,
+        trace_block_action,
+        (SELECT ARRAY_AGG(json_key) FROM UNNEST(JSON_KEYS(trace_block_action)) as json_key WHERE json_key NOT IN ('completeTime','startTime','subExecutionSteps','displayName') AND json_key NOT LIKE '%.%')[SAFE_OFFSET(0)] as action_type,
+        JSON_VALUE(trace_block_action, '$.displayName') as action_name,
+        TIMESTAMP_MICROS(
+            SAFE_CAST(JSON_VALUE(trace_block_action, '$.startTime.seconds') AS INT64) * 1000000
+            + SAFE_CAST(CAST(JSON_VALUE(trace_block_action, '$.startTime.nanos') AS INT64) / 1000 AS INT64)
+        ) AS action_start_time,
+        TIMESTAMP_MICROS(
+            SAFE_CAST(JSON_VALUE(trace_block_action, '$.completeTime.seconds') AS INT64) * 1000000
+            + SAFE_CAST(CAST(JSON_VALUE(trace_block_action, '$.completeTime.nanos') AS INT64) / 1000 AS INT64)
+        ) AS action_complete_time,
+        JSON_VALUE(trace_block_action,'$.flowStateUpdate.pageState.displayName') as action_page_display_name,
+        JSON_VALUE(trace_block_action,'$.toolUse.displayName') as action_tool_display_name,
+        JSON_VALUE(trace_block_action,'$.toolUse.webhookToolTrace.webhookUri') as action_webhook_url,
+        JSON_VALUE(trace_block_action,'$.toolUse.webhookToolTrace.webhookTag') as action_webhook_tag,
+        (SELECT ARRAY_AGG(
+                STRUCT(
+                trace_block_action_sub_execution_step + 1 as step,
+                JSON_VALUE(trace_block_action_sub_execution,'$.name') as name,
+                TIMESTAMP_MICROS(
+                    SAFE_CAST(JSON_VALUE(trace_block_action_sub_execution, '$.startTime.seconds') AS INT64) * 1000000
+                    + SAFE_CAST(CAST(JSON_VALUE(trace_block_action_sub_execution, '$.startTime.nanos') AS INT64) / 1000 AS INT64)
+                ) AS start_time,
+                TIMESTAMP_MICROS(
+                    SAFE_CAST(JSON_VALUE(trace_block_action_sub_execution, '$.completeTime.seconds') AS INT64) * 1000000
+                    + SAFE_CAST(CAST(JSON_VALUE(trace_block_action_sub_execution, '$.completeTime.nanos') AS INT64) / 1000 AS INT64)
+                ) AS complete_time
+                ) ORDER BY trace_block_action_sub_execution_step)
+            FROM UNNEST(JSON_QUERY_ARRAY(trace_block_action,'$.subExecutionSteps')) AS trace_block_action_sub_execution 
+            WITH OFFSET as trace_block_action_sub_execution_step
+        ) as trace_block_action_execution_steps
+        FROM base_data
+        INNER JOIN UNNEST(trace_blocks) as trace_block WITH OFFSET AS trace_block_step 
+        INNER JOIN UNNEST(JSON_QUERY_ARRAY(trace_block,'$.actions')) as trace_block_action WITH OFFSET as trace_block_action_step )
+    , trace_block_actions_agg AS (
+        SELECT 
+        session_id,
+        response_id,
+        block_step,
+        block_start_time,
+        block_complete_time,
+        block_flow_display_name,
+        block_speech_processing_display_name,
+        ARRAY_AGG(
             STRUCT(
-              trace_block_action_sub_execution_step + 1 as step,
-              JSON_VALUE(trace_block_action_sub_execution,'$.name') as name,
-              TIMESTAMP_MICROS(
-                SAFE_CAST(JSON_VALUE(trace_block_action_sub_execution, '$.startTime.seconds') AS INT64) * 1000000
-                + SAFE_CAST(CAST(JSON_VALUE(trace_block_action_sub_execution, '$.startTime.nanos') AS INT64) / 1000 AS INT64)
-              ) AS start_time,
-              TIMESTAMP_MICROS(
-                SAFE_CAST(JSON_VALUE(trace_block_action_sub_execution, '$.completeTime.seconds') AS INT64) * 1000000
-                + SAFE_CAST(CAST(JSON_VALUE(trace_block_action_sub_execution, '$.completeTime.nanos') AS INT64) / 1000 AS INT64)
-              ) AS complete_time
-            ) ORDER BY trace_block_action_sub_execution_step)
-        FROM UNNEST(JSON_QUERY_ARRAY(trace_block_action,'$.subExecutionSteps')) AS trace_block_action_sub_execution 
-          WITH OFFSET as trace_block_action_sub_execution_step
-      ) as trace_block_action_execution_steps
-    FROM base_data
-      INNER JOIN UNNEST(trace_blocks) as trace_block WITH OFFSET AS trace_block_step 
-      INNER JOIN UNNEST(JSON_QUERY_ARRAY(trace_block,'$.actions')) as trace_block_action WITH OFFSET as trace_block_action_step )
-  , trace_block_actions_agg AS (
-    SELECT 
-      session_id,
-      response_id,
-      trace_block_step,
-      ARRAY_AGG(
-        STRUCT(
-          trace_block_action_step as step,
-          trace_block_action_type as type,
-          trace_block_action_name as name,
-          trace_block_start_time as start_time,
-          trace_block_complete_time as complete_time,
-          trace_block_action_execution_steps as execution_steps
-        )
-      ORDER BY trace_block_action_step) as trace_block_action
-    FROM trace_blocks_unnest
-    GROUP BY 1,2,3 )
+            action_step,
+            action_type,
+            action_name,
+            action_start_time,
+            action_complete_time,
+            action_page_display_name,
+            action_tool_display_name,
+            action_webhook_url,
+            action_webhook_tag,
+            trace_block_action_execution_steps as action_execution_steps
+            )
+        ORDER BY action_step) as action
+        FROM trace_blocks_unnest
+        GROUP BY 1,2,3,4,5,6,7 )
   , trace_blocks_agg AS (
     SELECT 
       session_id,
       response_id,
       ARRAY_AGG(
         STRUCT(
-          trace_block_step as step,
-          trace_block_action
+          block_step,
+          block_start_time,
+          block_complete_time,
+          block_flow_display_name,
+          block_speech_processing_display_name,
+          action
         )
-      ORDER BY trace_block_step) as trace_block
+      ORDER BY block_step) as trace
     FROM trace_block_actions_agg
     GROUP BY 1,2 )
   , partial_responses_agent_response AS (
@@ -654,7 +690,7 @@ SELECT
   , playbooks_agg.playbooks
   , base_data.playbook_metrics
   , ARRAY_CONCAT(COALESCE(base_data.partial_responses,[]),COALESCE(base_data.response_messages,[])) as response_messages
-  , trace_blocks_agg.trace_block
+  , trace_blocks_agg.trace
   , base_data.insert_time
 FROM base_data
   LEFT JOIN execution_sequence_agg

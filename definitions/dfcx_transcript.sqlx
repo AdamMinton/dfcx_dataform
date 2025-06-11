@@ -642,6 +642,16 @@ WITH
       ORDER BY block_step) as trace
     FROM trace_block_actions_agg
     GROUP BY 1,2 )
+  , partial_responses_agg AS (
+    SELECT 
+      session_id,
+      response_id,
+      ARRAY_AGG(response_message ORDER BY partial_response_offset, response_message_offset) as partial_responses
+    FROM base_data
+      ,UNNEST(base_data.partial_responses) as partial_response WITH OFFSET AS partial_response_offset
+      ,UNNEST(JSON_QUERY_ARRAY(partial_response,'$.queryResult.responseMessages')) as response_message WITH OFFSET AS response_message_offset
+    GROUP BY 1,2
+  )
   , partial_responses_agent_response AS (
     SELECT 
       session_id,
@@ -689,7 +699,7 @@ SELECT
   , actions_agg.actions
   , playbooks_agg.playbooks
   , base_data.playbook_metrics
-  , ARRAY_CONCAT(COALESCE(base_data.partial_responses,[]),COALESCE(base_data.response_messages,[])) as response_messages
+  , ARRAY_CONCAT(COALESCE(partial_responses_agg.partial_responses,[]),COALESCE(base_data.response_messages,[])) as response_messages
   , trace_blocks_agg.trace
   , base_data.insert_time
 FROM base_data
@@ -709,6 +719,8 @@ FROM base_data
     USING(session_id,response_id)
   LEFT JOIN partial_responses_agent_response
     USING(session_id,response_id)
+  LEFT JOIN partial_responses_agg
+    USING (session_id, response_id)
 post_operations {
   -- Step 1: Identify sessions that need fixing
   CREATE TEMP TABLE sessions_to_fix AS

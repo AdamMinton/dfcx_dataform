@@ -2,35 +2,13 @@ config {
     type: "incremental",
     bigquery: {
         partitionBy: "TIMESTAMP_TRUNC(insert_time, DAY)",
-        updatePartitionFilter: "insert_time >= update_partition_checkpoint",
-        requirePartitionFilter : true
-    },
-    uniqueKey: ["session_id","insert_time"],
-    description: "ELT assistance table to create new position and session start time",
-    columns: {
-        session_start_time: "The time at which a session starts",
-        session_id: "The fully qualified unique ID for the session",
-        request_time: "The time of the conversational turn",
-        insert_time: "The UTC timestamp of when the record was inserted to the source table",
-        position: "The conversational turn number",
     }
 }
 
 pre_operations {
-  DECLARE insert_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE insert_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL (${dataform.projectConfig.vars.checkpointSeconds}) SECOND)`,
-            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
-    }
-    );
-  DECLARE update_partition_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL (${dataform.projectConfig.vars.insertDelaySeconds} + ${dataform.projectConfig.vars.sessionMaxSeconds}) SECOND)`,
-            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
-    }
-  );
+  DECLARE part_hours ARRAY<TIMESTAMP>;
+  DECLARE part_end TIMESTAMP;
+  DECLARE insert_time_checkpoint DEFAULT ( SELECT COALESCE(MAX(insert_time),${dataform.projectConfig.vars.backfillTimestamp}) FROM ${self()} );
 }
 
 WITH
@@ -42,69 +20,75 @@ WITH
   FROM
     `${dataform.projectConfig.defaultDatabase}.${dataform.projectConfig.vars.dialogflowExport}` AS dfcx
   WHERE TRUE
+    AND insert_time IS NOT NULL
     AND insert_time > insert_time_checkpoint
   GROUP BY 1,2,3
 )
-, all_session_records AS (
+, original_session_start_time AS (
   SELECT
       session_id
-    , request_time
-    , insert_time
-    , position
-  FROM
-    ${when(incremental(),
-      `${self()}`,
-      `(SELECT SAFE_CAST(NULL AS STRING) AS session_id, CURRENT_TIMESTAMP() AS request_time, CURRENT_TIMESTAMP() AS insert_time, 0 AS position)`)
-    }
+    , MIN(session_start_time) AS session_start_time
+  FROM ${self()}
   WHERE TRUE
+    AND insert_time IS NOT NULL
     AND insert_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL ${dataform.projectConfig.vars.sessionMaxSeconds} SECOND)
     AND session_id IN (SELECT session_id FROM recent_insert_data)
-  GROUP BY 1,2,3,4
-)
-, union_distinct AS (
-  SELECT
-      session_id
-    , request_time
-    , insert_time
-  FROM
-  (
-    SELECT
-        session_id
-      , request_time
-      , insert_time
-    FROM recent_insert_data
-      ${when(incremental(),
-        `UNION DISTINCT SELECT session_id, request_time, insert_time FROM all_session_records`,
-        ``)
-      }
-  )
-  GROUP BY 1,2,3
-)
-, session_start_time AS (
-  SELECT
-      session_id
-    , MIN(request_time) AS session_start_time
-  FROM union_distinct
   GROUP BY 1
 )
-, ranking_position AS (
-  SELECT
-      session_start_time.session_start_time
-    , union_distinct.session_id
-    , union_distinct.request_time
-    , union_distinct.insert_time
-    , ROW_NUMBER() OVER (PARTITION BY union_distinct.session_id ORDER BY union_distinct.request_time ASC) AS position
-  FROM union_distinct
-    LEFT JOIN session_start_time
-      USING (session_id)
+, session_start_time AS (
+    SELECT 
+        session_id,
+        MIN(IF(original_session_start_time.session_start_time < recent_insert_data.request_time, original_session_start_time.session_start_time, recent_insert_data.request_time)) as session_start_time
+    FROM recent_insert_data
+        LEFT JOIN original_session_start_time USING (session_id)
+    GROUP BY 1
 )
 SELECT
-    ranking_position.*
-FROM ranking_position
-  LEFT JOIN all_session_records
-    USING (session_id, insert_time)
+    session_start_time.session_start_time,
+    recent_insert_data.session_id,
+    recent_insert_data.request_time,
+    recent_insert_data.insert_time
+FROM recent_insert_data
+  LEFT JOIN session_start_time
+    USING (session_id)
 WHERE TRUE
-  AND (
-    all_session_records.position IS NULL --completely new row
-    OR all_session_records.position <> ranking_position.position --ranking changed
-  )
+
+post_operations {
+  -- Step 1: Identify sessions that need fixing
+  CREATE TEMP TABLE sessions_to_fix AS
+  SELECT
+    session_id,
+    ARRAY_AGG(DISTINCT session_start_time ORDER BY session_start_time) AS distinct_start_times,
+    MIN(session_start_time) AS new_start_time,
+    COUNT(DISTINCT session_start_time) AS num_start_times
+  FROM ${self()}
+  WHERE session_start_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL ${dataform.projectConfig.vars.sessionMaxSeconds} SECOND)
+  GROUP BY session_id
+  HAVING num_start_times > 1;
+  
+  -- Step 1a: Bail out early if nothing to do
+  IF (SELECT COUNT(*) FROM sessions_to_fix) = 0 THEN
+    RETURN;
+  END IF;
+
+  -- Step 2: Build the full partition list
+  SET part_hours = (
+    SELECT ARRAY_AGG(DISTINCT TIMESTAMP_TRUNC(ts, HOUR))
+    FROM sessions_to_fix, UNNEST(distinct_start_times) AS ts
+  );
+
+  -- Step 3: One partition-filtered UPDATE per hour
+  FOR part_row IN (
+    SELECT ts
+    FROM UNNEST(part_hours) AS ts
+  ) DO
+    SET part_end = TIMESTAMP_ADD(part_row.ts, INTERVAL 1 HOUR);
+
+    UPDATE  ${self()} AS tgt
+    SET     session_start_time = src.new_start_time
+    FROM    sessions_to_fix    AS src
+    WHERE   tgt.session_id         = src.session_id
+      AND   tgt.session_start_time >= part_row.ts
+      AND   tgt.session_start_time <  part_end;
+  END FOR;
+}

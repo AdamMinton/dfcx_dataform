@@ -2,293 +2,151 @@ config {
    type: "incremental",
    bigquery: {
      partitionBy: "TIMESTAMP_TRUNC(session_start_time, DAY)",
-     updatePartitionFilter: "session_start_time >= session_start_time_checkpoint",
      requirePartitionFilter : true
-   },
-   uniqueKey: ["session_id", "interaction_position"],
-   description: "Interactions for DFCX conversations",
-   columns: {
-     session_start_time: "The time at which a session starts",
-     session_id: "The fully qualified unique ID for the session",
-     interaction_position: "The position of the interaction within the session, based on head intents or start of conversation",
-     interaction_position_reverse: "The reverse position of the interaction within the session",
-     interaction_head_intent: "The main intent identified at the beginning of the interaction",
-     start_interaction_position: "The starting position within the transcript for this interaction",
-     end_interaction_position: "The ending position within the transcript for this interaction",
-     actions: {
-        description: "An array of actions performed during this interaction, including action type, status, and related flows/pages",
-        columns: {
-          action: "The name or identifier of the action performed",
-          action_type: "The type or category of the action (e.g., intent-specific, intent-agnostic)",
-          primary_action: "Indicates if this action is considered a primary action for the interaction",
-          action_started: "Boolean flag indicating if the action was started during this interaction",
-          action_started_position: "The transcript position where the action started",
-          action_ended: "Boolean flag indicating if the action was ended during this interaction",
-          action_ended_position: "The transcript position where the action ended",
-          primary_flow: "The primary Dialogflow CX flow associated with this action"
-        }
-     },
-     latest_insert_time: "The timestamp of the latest insert for the session"
    }
 }
 
 pre_operations {
-  DECLARE
-    insert_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MAX(latest_insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`,
-            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
-    }
-    );
-  DECLARE
-    session_start_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-            `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 36 HOUR) AND insert_time > insert_time_checkpoint`,
-            `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
-    }
-    )
+  DECLARE insert_time_checkpoint DEFAULT ( SELECT COALESCE(MAX(latest_insert_time),${dataform.projectConfig.vars.backfillTimestamp}) FROM ${self()} );
+  DECLARE session_start_time_checkpoint DEFAULT ( SELECT COALESCE(MIN(session_start_time),${dataform.projectConfig.vars.backfillTimestamp}) FROM ${ref("dfcx_transcript")} WHERE session_start_time IS NOT NULL AND insert_time > insert_time_checkpoint );
+  CREATE TEMP TABLE sessions_to_update AS (
+        SELECT DISTINCT session_id
+        FROM ${ref("dfcx_transcript")}
+        WHERE session_start_time >= session_start_time_checkpoint AND insert_time > insert_time_checkpoint
+  );
+  DELETE FROM ${self()} WHERE session_start_time >= session_start_time_checkpoint AND session_id IN (SELECT session_id FROM sessions_to_update);
 }
 
-WITH
-  transcript_raw AS (
-  SELECT
-      session_start_time
-    , request_time
-    , session_id
-    , response_id
-    , position
-    , insert_time
-    , match_type
-    , intent_display_name
-    , source_flow_display_name
-    , source_page_display_name
-    , flow_display_name
-    , page_display_name
-    , execution_sequence
-    , IF(intent_display_name IN (SELECT intent_display_name FROM ${ref("head_intent")}), intent_display_name,CAST(null AS STRING)) as head_intent
-  FROM
-    ${ref("dfcx_transcript")} AS dfcx_transcript
-  WHERE TRUE
-    AND session_start_time >= session_start_time_checkpoint
-)
-, transcript_processing AS (
-  SELECT
-      *
-    , IF(head_intent IS NOT NULL,TRUE,FALSE) AS flag_head_intent_changed
-    , ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY position DESC) AS position_reverse
-    , LAG(match_type,1) OVER (PARTITION BY session_id ORDER BY position ASC) AS previous_match_type
-    , LAG(intent_display_name,1) OVER (PARTITION BY session_id ORDER BY position ASC) AS previous_intent_display_name
-    , LAST_VALUE(position) OVER (PARTITION BY session_id ORDER BY position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS exit_position
-    , LEAD(intent_display_name,1) OVER (PARTITION BY session_id ORDER BY position ASC) AS next_intent_display_name
-    , LAG(head_intent,1) OVER (PARTITION BY session_id ORDER BY position ASC) AS previous_head_intent
-  FROM transcript_raw
-  WHERE TRUE
-)
-, session_info as (
-  SELECT
-      session_id
-    , MAX(insert_time) as latest_insert_time
-  FROM transcript_raw
-  GROUP BY 1
-)
-, interaction_rows AS (
-  SELECT
-      *
-    , CASE
-      WHEN position = 1 THEN TRUE
-      WHEN flag_head_intent_changed = TRUE THEN TRUE
-      ELSE NULL END AS keep_interaction_head_row
-  FROM transcript_processing
-  WHERE TRUE
-)
-, interaction_ranges AS (
-  SELECT
-      session_id
-    , position AS start_interaction_position
-    , COALESCE(LEAD(position) OVER (PARTITION BY session_id ORDER BY position ASC)-1,exit_position) AS end_interaction_position
-    , interaction_position
-    , interaction_position_reverse
-  FROM (
+WITH 
+
+defined_head_intents AS (
+  SELECT intent_name as head_intent FROM ${ref("intents")} WHERE head_intent = TRUE
+),
+
+defined_non_self_service_flows AS (
+  SELECT 'Default Start Flow' as flow_display_name
+),
+
+base_data AS (
     SELECT
-        session_id
-      , position
-      , exit_position
-      , ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY position ASC) AS interaction_position
-      , ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY position DESC) AS interaction_position_reverse
-    FROM
-      interaction_rows
-    WHERE TRUE
-      AND keep_interaction_head_row = TRUE
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY position ASC) < 5
-    )
-  WHERE TRUE
-)
-, interaction_information AS (
-  SELECT
-      session_id
-    , session_start_time
-    , interaction_position
-    , interaction_position_reverse
-    , start_interaction_position
-    , end_interaction_position
-    , interaction_head_intent
-    , ARRAY_AGG( STRUCT(position
-        , request_time
-        , step
-        , flow_display_name
-        , page_display_name
-        , intent_display_name
-        , match_type
-        , status
-        , triggered_condition
-      )
-    ORDER BY
-      position ASC, step ASC
-    LIMIT
-      5000 ) AS execution_steps
-    , MIN(request_time) AS start_interaction_timestamp
-    , MAX(request_time) AS end_interaction_timestamp
-  FROM (
+        *,
+        -- Flag if this turn matches a defined head intent
+        CASE WHEN intent_display_name IN (SELECT head_intent FROM defined_head_intents)
+             THEN intent_display_name
+             ELSE NULL
+        END AS detected_head_intent
+    FROM ${ref("dfcx_transcript")}
+    WHERE session_start_time >= session_start_time_checkpoint
+    AND session_id IN (SELECT session_id FROM sessions_to_update) 
+),
+
+interaction_grouping AS (
     SELECT
-        transcript_processing.session_id
-      , transcript_processing.session_start_time
-      , interaction_ranges.interaction_position
-      , interaction_ranges.interaction_position_reverse
-      , interaction_ranges.start_interaction_position
-      , interaction_ranges.end_interaction_position
-      , LAST_VALUE(transcript_processing.head_intent IGNORE NULLS) OVER (PARTITION BY transcript_processing.session_id, interaction_ranges.interaction_position ORDER BY transcript_processing.position ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS interaction_head_intent
-      , transcript_processing.position
-      , transcript_processing.request_time
-      , transcript_processing.position_reverse
-      , transcript_processing.match_type
-      , transcript_processing.intent_display_name
-      , execution_steps.step
-      , execution_steps.flow_display_name
-      , execution_steps.page_display_name
-      , execution_steps.status
-      , execution_steps.triggered_condition
-    FROM transcript_processing
-      INNER JOIN UNNEST(transcript_processing.execution_sequence) AS execution_steps
-      INNER JOIN interaction_ranges
-        ON transcript_processing.session_id = interaction_ranges.session_id
-        AND transcript_processing.position BETWEEN interaction_ranges.start_interaction_position AND interaction_ranges.end_interaction_position
-    )
-  GROUP BY 1,2,3,4,5,6,7
-)
-, actions_to_check AS (
-  SELECT
-      DISTINCT head_intent
-    , primary_flow
-    , start_flow
-    , start_page
-    , end_flow
-    , end_page
-    , action
-    , action_type
-    , outcome
-    , primary_action
-    , valid_from
-    , valid_to
-  FROM ${ref("intent_specific_actions")}
-  WHERE
-    start_page IS NOT NULL
-    AND end_page IS NOT NULL
-  UNION ALL
-  SELECT
-      interaction_head_intent AS head_intent
-    , primary_flow
-    , start_flow
-    , start_page
-    , end_flow
-    , end_page
-    , action
-    , action_type
-    , outcome
-    , primary_action
-    , valid_from
-    , valid_to
-  FROM (
+        session_start_time,
+        project_id,
+        location,
+        agent_id,
+        session_id,
+        request_time,
+        detected_head_intent,
+        -- Calculate a raw group ID based on cumulative count of head intents
+        COUNT(detected_head_intent) OVER (PARTITION BY session_id ORDER BY request_time ASC) AS raw_group_id
+    FROM base_data
+),
+
+interaction_ids AS (
     SELECT
-        DISTINCT interaction_head_intent
-    FROM
-      interaction_information) AS a
-  CROSS JOIN ${ref("intent_agnostic_actions")} b
+        *,
+        -- Force turns occurring before the first head intent (raw_group_id = 0) into the first interaction (1)
+        GREATEST(1, raw_group_id) AS interaction_position
+    FROM interaction_grouping
+),
+
+interaction_base AS (
+    SELECT
+        session_start_time,
+        project_id,
+        location,
+        agent_id,
+        session_id,
+        interaction_position,
+        -- The head intent for the interaction is the one that started it (min request time with a non-null intent in this group)
+        ARRAY_AGG(detected_head_intent IGNORE NULLS ORDER BY request_time ASC LIMIT 1)[SAFE_OFFSET(0)] AS interaction_head_intent,
+        MIN(request_time) AS start_interaction_time,
+        MAX(request_time) AS end_interaction_time
+    FROM interaction_ids
+    GROUP BY 1, 2, 3, 4, 5, 6
+),
+
+-- Flatten all actions to track Flow Start/End events
+flattened_flow_events AS (
+    SELECT
+        t.session_id,
+        t.request_time,
+        action.action_flow_id AS flow_id,
+        action.action_flow_display_name AS flow_display_name,
+        CASE WHEN action.action_page_display_name = 'Start Page' THEN TRUE ELSE FALSE END AS is_flow_start,
+        CASE WHEN action.action_page_display_name = 'Success' THEN TRUE ELSE FALSE END AS is_flow_success,
+        action.action_start_time
+    FROM base_data t,
+        UNNEST(blocks) AS block,
+        UNNEST(block.actions) AS action
+    WHERE action.action_flow_display_name NOT IN (SELECT flow_display_name FROM defined_non_self_service_flows) -- Exclude non-self-service flows from action tracking
+),
+
+-- Aggregate flow events per interaction
+interaction_flows AS (
+    SELECT
+        ib.session_id,
+        ib.interaction_position,
+        ffe.flow_id,
+        ffe.flow_display_name,
+        -- Did it start in this interaction?
+        LOGICAL_OR(ffe.is_flow_start) AS action_started,
+        MIN(CASE WHEN ffe.is_flow_start THEN ffe.action_start_time END) AS action_started_time,
+        -- Did it end (success) in this interaction?
+        LOGICAL_OR(ffe.is_flow_success) AS action_ended,
+        MAX(CASE WHEN ffe.is_flow_success THEN ffe.action_start_time END) AS action_ended_time
+    FROM interaction_base ib
+    JOIN flattened_flow_events ffe
+      ON ib.session_id = ffe.session_id
+     AND ffe.request_time BETWEEN ib.start_interaction_time AND ib.end_interaction_time
+    GROUP BY 1, 2, 3, 4
+),
+
+session_metadata AS (
+    SELECT DISTINCT
+        session_id,
+        MAX(insert_time) as latest_insert_time
+    FROM base_data
+    GROUP BY 1
 )
-, unnest_execution_steps AS (
-  SELECT
-      session_start_time
-    , session_id
-    , interaction_position
-    , interaction_position_reverse
-    , interaction_head_intent
-    , start_interaction_position
-    , start_interaction_timestamp
-    , end_interaction_position
-    , end_interaction_timestamp
-    , request_time
-    , position
-    , step
-    , flow_display_name || '~' || page_display_name as flow_and_page
-  FROM interaction_information
-    LEFT JOIN UNNEST(execution_steps) AS es
-)
-, checking_self_service AS (
-  SELECT
-      unnest_execution_steps.session_id
-    , unnest_execution_steps.session_start_time
-    , unnest_execution_steps.interaction_position
-    , unnest_execution_steps.interaction_position_reverse
-    , unnest_execution_steps.interaction_head_intent
-    , actions.action
-    , actions.action_type
-    , actions.outcome
-    , unnest_execution_steps.start_interaction_position
-    , unnest_execution_steps.start_interaction_timestamp
-    , unnest_execution_steps.end_interaction_position
-    , unnest_execution_steps.end_interaction_timestamp
-    , actions.primary_action
-    , actions.primary_flow
-    , MAX(CASE WHEN actions.start_flow || '~' || actions.start_page = unnest_execution_steps.flow_and_page THEN TRUE
-      ELSE FALSE END) AS action_started
-    , MIN(CASE WHEN actions.start_flow || '~' || actions.start_page = unnest_execution_steps.flow_and_page THEN unnest_execution_steps.position
-      ELSE NULL END) AS action_started_position
-    , MIN(CASE WHEN actions.start_flow || '~' || actions.start_page = unnest_execution_steps.flow_and_page THEN unnest_execution_steps.request_time
-      ELSE NULL END) AS action_started_timestamp
-    , MAX(CASE WHEN actions.end_flow || '~' || actions.end_page = unnest_execution_steps.flow_and_page THEN TRUE
-      ELSE FALSE END) AS action_ended
-    , MAX(CASE WHEN actions.end_flow || '~' || actions.end_page = unnest_execution_steps.flow_and_page THEN unnest_execution_steps.position
-      ELSE NULL END ) AS action_ended_position
-    , MAX(CASE WHEN actions.end_flow || '~' || actions.end_page = unnest_execution_steps.flow_and_page THEN unnest_execution_steps.request_time
-      ELSE NULL END) AS action_ended_timestamp
-  FROM unnest_execution_steps
-  LEFT JOIN actions_to_check AS actions
-    ON COALESCE(unnest_execution_steps.interaction_head_intent,'~NULL~') = COALESCE(actions.head_intent,'~NULL~')
-    AND DATE(unnest_execution_steps.start_interaction_timestamp) BETWEEN valid_from AND valid_to
-  GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14
-)
+
 SELECT
-    checking_self_service.session_start_time
-  , checking_self_service.session_id
-  , checking_self_service.interaction_position
-  , checking_self_service.interaction_position_reverse
-  , checking_self_service.interaction_head_intent
-  , checking_self_service.start_interaction_position
-  , checking_self_service.end_interaction_position
-  , session_info.latest_insert_time
-  , ARRAY_AGG(STRUCT(
-    checking_self_service.action
-    , checking_self_service.action_type
-    , checking_self_service.primary_action
-    , checking_self_service.action_started
-    , checking_self_service.action_started_position
-    , CASE WHEN checking_self_service.action_started = TRUE THEN checking_self_service.action_ended ELSE FALSE END AS action_ended
-    , checking_self_service.action_ended_position
-    , checking_self_service.primary_flow
-  )) AS actions
-FROM checking_self_service
-LEFT JOIN session_info
-  ON checking_self_service.session_id = session_info.session_id
-WHERE TRUE
-GROUP BY 1,2,3,4,5,6,7,8
+    base.session_start_time,
+    base.project_id,
+    base.location,
+    base.agent_id,
+    base.session_id,
+    base.interaction_position,
+    -- Calculate reverse position
+    ROW_NUMBER() OVER (PARTITION BY base.session_id ORDER BY base.interaction_position DESC) AS interaction_position_reverse,
+    base.interaction_head_intent,
+    base.start_interaction_time,
+    base.end_interaction_time,
+    -- Construct the nested flows array
+    ARRAY(
+        SELECT AS STRUCT
+            flow.flow_id,
+            flow.flow_display_name,
+            flow.action_started,
+            flow.action_started_time,
+            flow.action_ended,
+            flow.action_ended_time
+        FROM interaction_flows flow
+        WHERE flow.session_id = base.session_id
+          AND flow.interaction_position = base.interaction_position
+    ) AS flows,
+    md.latest_insert_time
+FROM interaction_base base
+LEFT JOIN session_metadata md ON base.session_id = md.session_id

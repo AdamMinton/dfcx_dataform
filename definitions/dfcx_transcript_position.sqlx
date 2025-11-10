@@ -2,13 +2,15 @@ config {
     type: "incremental",
     bigquery: {
         partitionBy: "TIMESTAMP_TRUNC(insert_time, DAY)",
-    }
+        requirePartitionFilter : true
+    },
+    tags: ["high-frequency"]
 }
 
 pre_operations {
   DECLARE part_hours ARRAY<TIMESTAMP>;
   DECLARE part_end TIMESTAMP;
-  DECLARE insert_time_checkpoint DEFAULT ( SELECT COALESCE(MAX(insert_time),${dataform.projectConfig.vars.backfillTimestamp}) FROM ${self()} );
+  DECLARE insert_time_checkpoint DEFAULT ( SELECT COALESCE(MAX(insert_time),${dataform.projectConfig.vars.backfillTimestamp}) FROM ${self()} WHERE insert_time IS NOT NULL );
 }
 
 WITH
@@ -30,7 +32,6 @@ WITH
     , MIN(session_start_time) AS session_start_time
   FROM ${self()}
   WHERE TRUE
-    AND insert_time IS NOT NULL
     AND insert_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL ${dataform.projectConfig.vars.sessionMaxSeconds} SECOND)
     AND session_id IN (SELECT session_id FROM recent_insert_data)
   GROUP BY 1
@@ -62,7 +63,7 @@ post_operations {
     MIN(session_start_time) AS new_start_time,
     COUNT(DISTINCT session_start_time) AS num_start_times
   FROM ${self()}
-  WHERE session_start_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL ${dataform.projectConfig.vars.sessionMaxSeconds} SECOND)
+  WHERE insert_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL ${dataform.projectConfig.vars.sessionMaxSeconds} SECOND)
   GROUP BY session_id
   HAVING num_start_times > 1;
   
@@ -86,9 +87,9 @@ post_operations {
 
     UPDATE  ${self()} AS tgt
     SET     session_start_time = src.new_start_time
-    FROM    sessions_to_fix    AS src
-    WHERE   tgt.session_id         = src.session_id
-      AND   tgt.session_start_time >= part_row.ts
-      AND   tgt.session_start_time <  part_end;
+    FROM    sessions_to_fix AS src
+    WHERE   tgt.session_id  = src.session_id
+      AND   tgt.insert_time >= part_row.ts
+      AND   tgt.insert_time <  part_end;
   END FOR;
 }

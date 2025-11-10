@@ -3,11 +3,12 @@ config {
    bigquery: {
      partitionBy: "TIMESTAMP_TRUNC(session_start_time, DAY)",
      requirePartitionFilter : true
-   }
+   },
+    tags: ["high-frequency"]
 }
 
 pre_operations {
-  DECLARE insert_time_checkpoint DEFAULT ( SELECT COALESCE(MAX(latest_insert_time),${dataform.projectConfig.vars.backfillTimestamp}) FROM ${self()} );
+  DECLARE insert_time_checkpoint DEFAULT ( SELECT COALESCE(MAX(latest_insert_time),${dataform.projectConfig.vars.backfillTimestamp}) FROM ${self()} WHERE session_start_time IS NOT NULL );
   DECLARE session_start_time_checkpoint DEFAULT ( SELECT COALESCE(MIN(session_start_time),${dataform.projectConfig.vars.backfillTimestamp}) FROM ${ref("dfcx_transcript")} WHERE session_start_time IS NOT NULL AND insert_time > insert_time_checkpoint );
   CREATE TEMP TABLE sessions_to_update AS (
         SELECT DISTINCT session_id

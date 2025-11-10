@@ -3,7 +3,8 @@ config {
    bigquery: {
      partitionBy: "TIMESTAMP_TRUNC(session_start_time, DAY)",
      requirePartitionFilter : true
-   }
+   },
+    tags: ["high-frequency"]
 }
 
 pre_operations {

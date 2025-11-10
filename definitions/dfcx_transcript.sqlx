@@ -2,8 +2,9 @@ config {
     type: "incremental",
     bigquery: {
         partitionBy: "TIMESTAMP_TRUNC(session_start_time, DAY)",
+        requirePartitionFilter : true
     },
-    tags: ["high-frequency"],
+    tags: ["high-frequency"]
 }
 
 pre_operations {

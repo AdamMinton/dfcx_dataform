@@ -2,226 +2,21 @@ config {
     type: "incremental",
     bigquery: {
         partitionBy: "TIMESTAMP_TRUNC(session_start_time, DAY)",
-        requirePartitionFilter : true
     },
-    description: "Main reporting table for DFCX conversations",
-    columns: {
-      project_id: "The GCP project ID",
-      location: "The GCP project location",
-      agent_id: "The user-provided identifier for the agent who handled the conversation",
-      session_id: "The fully qualified unique ID for the session",
-      session_start_time: "The time at which a session starts",
-      response_id: "The unique ID associated with the response from the agent",
-      request_time: "The time of the conversational turn",
-      position: "The conversational turn number",
-      user_utterance: "The turn level user's utterance with the agent",
-      optional_dtmf_digits: "The turn level user's input on phone key pad",
-      agent_response: "The agent's response to user utterance at turn level for a particular conversation",
-      source_flow_id: "The unique ID of the matched source flow at every turn in the conversation",
-      source_flow_display_name: "The human readable name of the source flow at every turn in the conversation",
-      source_page_id: "The unique ID of the matched source page at every turn in the conversation",
-      source_page_display_name: "The human readable name of the source page at every turn in the conversation",
-      flow_id: "The unique ID of the matched flow",
-      flow_display_name: "The human readable name of the flow",
-      page_id: "The unique ID of the matched page",
-      page_display_name: "The human readable name of the page",
-      intent_display_id: "The unique ID of the matched intent",
-      intent_display_name: "The human readable name of the matched intent",
-      intent_confidence_score: "The magnitude of the matched intent score in the scale of 0-1",
-      match_type: "The intent or playbook match associated with user utterance",
-      event: "The trigger based on a specific action or flow in the agent based on something that happened, rather than direct user input",
-      execution_sequence_count: "The number of steps in the execution sequence",
-      language_code: "The language tag",
-      session_parameters: "The various session parameters as represented at the end of a turn",
-      matched_intent_parameters: {
-        description: "The parameters extracted from the user's matched intent",
-        columns: {
-          session_parameter: "The name of the session parameter used to capture the user's matched intent",
-          original: "The original text value of the matched intent parameter as provided by the user",
-          resolved: "The resolved or normalized value of the matched intent parameter",
-          entity_type: "The entity type from Dialogflow"
-        }
-      },
-      execution_sequence: {
-        description: "The individual processing steps through flows and pages",
-        columns: {
-          step: "Refers to a single action or processing unit that occurs during a conversation turn",
-          flow_id: "The unique ID of the matched flow",
-          flow_display_name: "The human readable name of the flow",
-          page_id: "The unique ID of the matched page",
-          page_display_name: "The human readable name of the page",
-          status: "Refers to the outcome or result of a particular step",
-          session_parameters_initial: "The initial value of various session parameters used across the pages in the agent",
-          session_parameters_updated: "The updated value of various session parameters used across the pages in the agent",
-          system_function_results: "The detailed information about the evaluation of system functions within your agent",
-          responses: "The output or result that a function produces after it has been executed",
-          matched_intent: "The human readable name of the matched intent",
-          triggered_transition_route_id: "A unique ID of the transition route on a page",
-          triggered_intent: "The intent that is triggered based on the user utterance",
-          triggered_condition: "The condition that is met based on the context & the user utterance",
-          target_flow_id: "A unique ID of the flow that is triggered based on the user utterance",
-          target_page_id: "A unique ID of the page that is triggered based on the user utterance",
-          webhook_id: "A unique ID of the triggered webhook function call",
-          webhook_display_name: "The readable name of the triggered webhook function call",
-          webhook_latency_ms: "The latency associated with a particular function call made from the agent",
-          webhook_status: "The PASS or the FAILURE status associated with a particular function call made from the agent",
-          webhook_status_error_message: "The error message associated with a failed webhook call",
-          webhook_url: "The entire URL associated with a particular function call made from the agent",
-          step_processing_ms: "Describes how long it took, in milliseconds, to process a specific step within a function",
-        }
-      },
-      webhooks: {
-        description: "The webhook executed within a turn",
-        columns: {
-          step: "Refers to a single action or processing unit that occurs during a conversation turn",
-          flow_id: "The unique ID of the matched flow",
-          flow_display_name: "The human readable name of the flow",
-          page_id: "The unique ID of the matched page",
-          page_display_name: "The human readable name of the page",
-          webhook_id: "A unique ID of the triggered webhook function call",
-          webhook_display_name: "The readable name of the triggered webhook function call",
-          webhook_latency_ms: "The latency associated with a particular function call made from the agent",
-          webhook_status: "The PASS or the FAILURE status associated with a particular function call made from the agent",
-          webhook_status_error_message: "The error message associated with a failed webhook call",
-          webhook_url: "The entire URL associated with a particular function call made from the agent",
-          session_parameters_updated: "The updated value of various session parameters used across the pages in the agent",
-        }
-      },
-      alternative_matched_intents: {
-        description: "The list of intents that are closely matched based on the user utterance",
-        columns: {
-          alternative_matched_intent: "The intent that is closely matched based on the user utterance",
-          score: "The confidence score associated with the matched intent",
-        }
-      },
-      input_audio_ms: "The user utterance voice latency",
-      output_audio_ms: "The agent utterance voice latency",
-      actions: {
-        description: "The actions performed by the generative playbook for the current turn",
-        columns: {
-          action_step: "The order of the action",
-          action: "The type of action executed",
-          action_id: "The fully qualified unique ID for the action",
-          action_name: "The name of the action",
-          action_state: "The state of the action",
-          action_input: "The input parameters to the action",
-          action_output: "The output parameters of the action",
-        }
-      },
-      playbooks: {
-        description: "The list of playbooks used within the agent",
-        columns: {
-          playbook_step: "The order of the playbooks entered",
-          playbook_id: "The fully qualified unique ID for the triggered playbook",
-          playbook_name: "The human readable name associated with the triggered playbook",
-        }
-      },
-      response_messages: "Represents a response message that can be returned by a conversational agent",
-      playbook_metrics: {
-        description: "The key metrics associated with the overall playbooks part of the agent",
-        columns: {
-          llm_latency_ms: "The latency associated due to the payload context size associated with the playbook",
-          tool_latency_ms: "The latency due to the tools being called from the playbook",
-          total_latency_ms: "The total latency associated with a playbook call",
-          input_token_limit: "The max incoming JSON payload context size into a playbook",
-          output_token_limit: "The  max outgoing JSON payload context size from a playbook",
-          input_tokens_count: "The actual number of token numbers of incoming JSON payload into a playbook",
-          output_tokens_count: "The actual number of token numbers of outgoing JSON payload from a playbook",
-          states: "The multiple states associated with the playbook execution",
-        }
-      },
-      trace: {
-        description: "The individual processing steps through flows, pages, and playbooks",
-        columns: {
-            block_step: "Refers to a single block that occurs during a conversation turn",
-            block_start_time: "Time the block started",
-            block_complete_time: "Time the block completed",
-            block_flow_display_name: "Display name of the flow for the block",
-            block_speech_processing_display_name: "Display name of the speech processing for the block",
-            action: {
-                description: "Refers to a single action within a block that occurs during a conversation turn",
-                columns: {
-                    action_step: "Refers to a single action within a block that occurs during a conversation turn",
-                    action_type: "Type of action that is traced",
-                    action_name: "Name of the action that is traced",
-                    action_start_time: "Time the action started",
-                    action_complete_time: "Time the action completed",
-                    action_page_display_name: "Display name of the page for the action",
-                    action_tool_display_name: "Display name of the tool for the action",
-                    action_webhook_url: "URL of the webhook for the action",
-                    action_webhook_tag: "Tag of the webhook for the action",
-                    action_execution_steps: {
-                        description: "Refers to a single execution step within an action",
-                        columns: {
-                            step: "Refers to a single execution step within an action",
-                            name: "Name of the execution step",
-                            start_time: "Time the execution step started",
-                            complete_time: "Time the execution step completed"
-                        }
-                    }
-                }
-            }
-        }
-    },
-      insert_time: "The UTC timestamp of when the record was inserted to the source table"
-    }
+    tags: ["high-frequency"],
 }
 
 pre_operations {
   DECLARE part_hours ARRAY<TIMESTAMP>;
   DECLARE part_end TIMESTAMP;
-  DECLARE insert_time_checkpoint DEFAULT (
-    ${
-        when(incremental(),
-          `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.checkpointSeconds} SECOND)`,
-          `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
-    }
-    );
-
-  CREATE TEMP FUNCTION extract_matched_intent_parameters(jsonObject JSON)
-  RETURNS ARRAY<STRUCT<session_parameter STRING, original STRING, resolved ARRAY<STRING>, entity_type STRING>>
-  LANGUAGE js AS """
-    try {
-      if (!jsonObject || !jsonObject.Parameters) {
-        return [];
-      }
-
-      const parameters = jsonObject.Parameters;
-      const result = [];
-
-      for (const key in parameters) {
-        if (parameters.hasOwnProperty(key)) {
-          const param = parameters[key];
-
-          let resolvedArray;
-          if (Array.isArray(param.resolved)) {
-            // Handle case where resolved is an array
-            resolvedArray = param.resolved.map(item => typeof item === 'object' ? JSON.stringify(item) : item.toString());
-          } else if (typeof param.resolved === 'object' && param.resolved !== null) {
-            // Handle case where resolved is a single object
-            resolvedArray = [JSON.stringify(param.resolved)];
-          } else {
-            // Handle case where resolved is a string or null
-            resolvedArray = param.resolved ? [param.resolved.toString()] : [];
-          }
-
-          result.push({
-            session_parameter: key,
-            original: param.original ? param.original.toString() : '',
-            resolved: resolvedArray,
-            entity_type: param.type && param.type.toString().trim() !== '' ? param.type.toString() : null
-          });
-        }
-      }
-
-      return result;
-    } catch (e) {
-      return [];
-    }
-  """;
-
+  DECLARE insert_time_checkpoint DEFAULT ( SELECT COALESCE(MAX(insert_time),${dataform.projectConfig.vars.backfillTimestamp}) FROM ${self()} );
 }
 
+-- CTE 1: base_data
+-- Selects core fields from the Dialogflow CX raw export and joins with session position information.
+-- Extracts various details from JSON request/response payloads, including user utterances, intents, parameters, and agent responses.
+-- Filters data based on insertion time and specific event types.
+-- Deduplicates records per session and response ID, keeping the latest based on request_time.
 WITH
   base_data AS (
   SELECT
@@ -230,7 +25,7 @@ WITH
     , SPLIT(dfcx.conversation_name,'/')[SAFE_OFFSET(3)] AS location
     , dfcx.agent_id AS agent_id
     , ARRAY_REVERSE(SPLIT(dfcx.conversation_name,'/'))[SAFE_OFFSET(0)] AS session_id
-    , dfcx_position.position AS position
+    , dfcx.turn_position AS position
     , JSON_VALUE(dfcx.response,'$.responseId') AS response_id
     , dfcx.request_time AS request_time
     , dfcx.insert_time as insert_time
@@ -252,7 +47,6 @@ WITH
     , JSON_QUERY_ARRAY(dfcx.response,'$.queryResult.generativeInfo.currentPlaybooks') as current_playbooks
     , JSON_QUERY(dfcx.response,'$.queryResult.match.knowledgeConnectorAnswer') as knowledge_connector_answer
     , derived_data.v3SessionLatencies.executionStepDurations AS execution_steps_durations
-    , JSON_VALUE(dfcx.derived_data,'$.speechRecognitionConfig.model') AS speech_recognition_model
     , COALESCE(SAFE_DIVIDE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.inputAudioDuration.nanos') AS INT64),1000000),0)
       + COALESCE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.inputAudioDuration.seconds') AS INT64) * 1000,0) AS input_audio_ms
     , COALESCE(SAFE_DIVIDE(SAFE_CAST(JSON_VALUE(derived_data,'$.responseMetrics.outputAudioDuration.nanos') AS INT64),1000000),0)
@@ -311,6 +105,11 @@ WITH
     AND dfcx_position.insert_time > insert_time_checkpoint
   QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id,response_id ORDER BY request_time DESC) = 1
   )
+
+-- CTE 2: execution_sequence
+-- Unnests the 'execution_sequence' array from 'base_data' to process each step individually.
+-- Adds a 1-based step number.
+-- Standardizes 'Step X' and 'SessionParameters' strings within the execution sequence JSON for consistent parsing.
   , execution_sequence AS (
   SELECT
       step + 1 AS step
@@ -320,6 +119,11 @@ WITH
   FROM base_data
     LEFT JOIN UNNEST(base_data.execution_sequence) AS execution_sequence WITH OFFSET AS step
   )
+
+-- CTE 3: execution_sequence_parse
+-- Parses detailed information from each step of the 'execution_sequence_step' JSON string.
+-- Extracts flow IDs, page IDs, statuses, parameters, triggered intents/conditions, target flows/pages, and webhook details.
+-- Handles potential nulls in JSON structures by coalescing to empty JSON objects.
   , execution_sequence_parse AS (
   SELECT
       session_id
@@ -352,8 +156,12 @@ WITH
     , COALESCE( JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status'),JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorCode') ) AS webhook_status
     , JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.Status.ErrorMessage') AS webhook_status_error_message
     , JSON_VALUE(execution_sequence_step,'$.Step X.FunctionExecution.Webhook.URL') AS webhook_url
+    , JSON_VALUE(execution_sequence_step, '$.Step X.FunctionExecution.Webhook.Tag') AS webhook_tag
   FROM
     execution_sequence AS es )
+
+-- CTE 4: execution_steps_durations
+-- Extracts and parses individual step durations from the 'execution_steps_durations' JSON.
   , execution_steps_durations AS (
   SELECT
       session_id
@@ -362,6 +170,9 @@ WITH
     , SAFE_CAST(REGEXP_EXTRACT(execution_step_duration,r':(\d+)') AS INT64) AS step_ms
   FROM base_data
     INNER JOIN UNNEST(SPLIT(REGEXP_REPLACE(TO_JSON_STRING(execution_steps_durations),r'[{}]',''),',')) AS execution_step_duration )
+
+-- CTE 5: determine_execution_sequence_components
+-- Identifies the presence of 'InitialState', 'StateMachine', and 'FunctionExecution' components in each execution sequence step.
   , determine_execution_sequence_components AS (
   SELECT
       session_id
@@ -372,6 +183,9 @@ WITH
     , IF(JSON_QUERY(execution_sequence.execution_sequence_step,'$.Step X.FunctionExecution') IS NULL,0,1) AS function_execution_present
   FROM
     execution_sequence )
+
+-- CTE 6: find_duration_end_ranges
+-- Calculates the cumulative sum of components present to define the end range for associating durations to steps.
   , find_duration_end_ranges AS (
   SELECT
       session_id
@@ -380,6 +194,9 @@ WITH
     , initial_state_present + state_machine_present + function_execution_present AS components_present
     , SUM(initial_state_present + state_machine_present + function_execution_present) OVER (PARTITION BY session_id,response_id ORDER BY step ASC) AS end_duration_step
   FROM determine_execution_sequence_components )
+
+-- CTE 7: find_duration_start_ranges
+-- Determines the start range for associating durations to steps using a lagged sum of components.
   , find_duration_start_ranges AS (
   SELECT
       session_id
@@ -390,6 +207,10 @@ WITH
     , end_duration_step
   FROM
     find_duration_end_ranges )
+
+-- CTE 8: associate_durations_to_step
+-- Associates the calculated step durations with the parsed execution sequence steps.
+-- Sums up the milliseconds for each component within a step to get the total step processing time.
   , associate_durations_to_step AS (
   SELECT
       execution_sequence_parse.session_id
@@ -407,6 +228,11 @@ WITH
     AND execution_steps_durations.duration_step BETWEEN find_duration_start_ranges.start_duration_step
     AND find_duration_start_ranges.end_duration_step
   GROUP BY 1,2,3 )
+
+-- CTE 9: execution_sequence_agg
+-- Aggregates the parsed execution sequence steps back into an array of structs for each session and response.
+-- Orders the steps chronologically.
+-- Consolidates initial and state machine flow/page information.
   , execution_sequence_agg AS (
   SELECT
       session_id
@@ -434,12 +260,20 @@ WITH
         , webhook_status
         , webhook_status_error_message
         , webhook_url
-        , IF(COALESCE(total_step_ms,0) > 0,COALESCE(total_step_ms,0) - COALESCE(webhook_latency_ms,0),0) AS step_processing_ms )
+        , IF(COALESCE(total_step_ms,0) > 0,COALESCE(total_step_ms,0) - COALESCE(webhook_latency_ms,0),0) AS step_processing_ms
+        , webhook_tag
+        )
+        
       ORDER BY step ASC) AS execution_sequence
   FROM execution_sequence_parse
     LEFT JOIN associate_durations_to_step
       USING(session_id,response_id,step)
   GROUP BY 1,2 )
+
+-- CTE 10: webhook_agg
+-- Aggregates webhook-specific details from the parsed execution sequence.
+-- Filters for steps where a webhook_id is present.
+-- Creates an array of structs containing webhook information per session and response, ordered by step.
   , webhook_agg AS (
   SELECT
       session_id
@@ -456,26 +290,19 @@ WITH
       , webhook_status
       , webhook_status_error_message
       , webhook_url
-      , session_parameters_updated)
+      , session_parameters_updated
+      , webhook_tag
+      )
     ORDER BY step ASC) AS webhooks
   FROM execution_sequence_parse
   WHERE TRUE
     AND webhook_id IS NOT NULL
   GROUP BY 1,2 )
-  , source_and_target_page AS (
-  SELECT
-      session_id
-    , response_id
-    , execution_sequence[SAFE_OFFSET(0)].flow_id AS source_flow_id
-    , execution_sequence[SAFE_OFFSET(0)].flow_display_name AS source_flow_display_name
-    , execution_sequence[SAFE_OFFSET(0)].page_id AS source_page_id
-    , execution_sequence[SAFE_OFFSET(0)].page_display_name AS source_page_display_name
-    , execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].flow_id
-    , execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].flow_display_name
-    , execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_id
-    , execution_sequence[SAFE_OFFSET(ARRAY_LENGTH(execution_sequence)-1)].page_display_name
-    , extract_matched_intent_parameters(execution_sequence[SAFE_OFFSET(0)].matched_intent) as matched_intent_parameters
-  FROM execution_sequence_agg )
+
+-- CTE 12: alternative_matched_intents
+-- Unnests and aggregates alternative matched intents from 'base_data'.
+-- Excludes the primary matched intent.
+-- Orders alternatives by their confidence score in descending order.
   , alternative_matched_intents AS (
   SELECT
       session_id
@@ -489,6 +316,12 @@ WITH
   WHERE TRUE
     AND JSON_VALUE(alternative_matched_intent,'$.DisplayName') <> base_data.intent_display_name
   GROUP BY 1,2 )
+
+-- CTE 13: actions
+-- Unnests and processes generative AI actions (toolUse, playbookInvocation, flowInvocation) from 'base_data'.
+-- Assigns a step number to each action within a response.
+-- Decodes action IDs to names by joining with an 'action_id_decoder' reference table.
+-- Extracts action input and output parameters.
   , actions AS (
     SELECT
       session_id
@@ -515,6 +348,9 @@ WITH
           WHEN JSON_EXTRACT(action,'$.flowInvocation') IS NOT NULL THEN 'flowInvocation'
         END IS NOT NULL
   )
+
+-- CTE 14: actions_agg
+-- Aggregates the processed actions into an array of structs for each session and response.
   , actions_agg AS (
     SELECT
       session_id
@@ -532,6 +368,10 @@ WITH
       ) as actions
     FROM actions
     GROUP BY 1,2 )
+
+-- CTE 15: playbooks
+-- Unnests current playbooks from 'base_data'.
+-- Extracts playbook ID and decodes its name using the 'action_id_decoder' reference table (assuming playbooks are also actions).
   , playbooks AS (
     SELECT
       session_id
@@ -543,6 +383,9 @@ WITH
       LEFT JOIN UNNEST(current_playbooks) as current_playbook WITH OFFSET as playbook_step
       LEFT JOIN ${ref("action_id_decoder")} AS action_id_decoder
         ON ARRAY_REVERSE(SPLIT(JSON_VALUE(current_playbook,'$'),'/'))[SAFE_OFFSET(0)] = action_id_decoder.action_id )
+
+-- CTE 16: playbooks_agg
+-- Aggregates playbook information into an array of structs for each session and response.
   , playbooks_agg AS (
     SELECT
       session_id
@@ -550,118 +393,322 @@ WITH
       ,ARRAY_AGG(STRUCT(playbook_step,playbook_id,playbook_name )) AS playbooks
     FROM playbooks
     GROUP BY 1,2 )
-    , trace_blocks_unnest AS (
-        SELECT 
-        session_id,
-        response_id,
-        trace_block_step + 1 AS block_step,
-        trace_block,
-        TIMESTAMP_MICROS(
-            SAFE_CAST(JSON_VALUE(trace_block, '$.startTime.seconds') AS INT64) * 1000000
-            + SAFE_CAST(CAST(JSON_VALUE(trace_block, '$.startTime.nanos') AS INT64) / 1000 AS INT64)
-        ) AS block_start_time,
-        TIMESTAMP_MICROS(
-            SAFE_CAST(JSON_VALUE(trace_block, '$.completeTime.seconds') AS INT64) * 1000000
-            + SAFE_CAST(CAST(JSON_VALUE(trace_block, '$.completeTime.nanos') AS INT64) / 1000 AS INT64)
-        ) AS block_complete_time,
-        JSON_VALUE(trace_block,'$.flowTraceMetadata.displayName') as block_flow_display_name,
-        JSON_VALUE(trace_block,'$.speechProcessingMetadata.displayName') as block_speech_processing_display_name,
-        trace_block_action_step + 1 AS action_step,
-        trace_block_action,
-        (SELECT ARRAY_AGG(json_key) FROM UNNEST(JSON_KEYS(trace_block_action)) as json_key WHERE json_key NOT IN ('completeTime','startTime','subExecutionSteps','displayName') AND json_key NOT LIKE '%.%')[SAFE_OFFSET(0)] as action_type,
-        JSON_VALUE(trace_block_action, '$.displayName') as action_name,
-        TIMESTAMP_MICROS(
-            SAFE_CAST(JSON_VALUE(trace_block_action, '$.startTime.seconds') AS INT64) * 1000000
-            + SAFE_CAST(CAST(JSON_VALUE(trace_block_action, '$.startTime.nanos') AS INT64) / 1000 AS INT64)
-        ) AS action_start_time,
-        TIMESTAMP_MICROS(
-            SAFE_CAST(JSON_VALUE(trace_block_action, '$.completeTime.seconds') AS INT64) * 1000000
-            + SAFE_CAST(CAST(JSON_VALUE(trace_block_action, '$.completeTime.nanos') AS INT64) / 1000 AS INT64)
-        ) AS action_complete_time,
-        JSON_VALUE(trace_block_action,'$.flowStateUpdate.pageState.displayName') as action_page_display_name,
-        JSON_VALUE(trace_block_action,'$.toolUse.displayName') as action_tool_display_name,
-        JSON_VALUE(trace_block_action,'$.toolUse.webhookToolTrace.webhookUri') as action_webhook_url,
-        JSON_VALUE(trace_block_action,'$.toolUse.webhookToolTrace.webhookTag') as action_webhook_tag,
-        (SELECT ARRAY_AGG(
-                STRUCT(
-                trace_block_action_sub_execution_step + 1 as step,
-                JSON_VALUE(trace_block_action_sub_execution,'$.name') as name,
-                TIMESTAMP_MICROS(
-                    SAFE_CAST(JSON_VALUE(trace_block_action_sub_execution, '$.startTime.seconds') AS INT64) * 1000000
-                    + SAFE_CAST(CAST(JSON_VALUE(trace_block_action_sub_execution, '$.startTime.nanos') AS INT64) / 1000 AS INT64)
-                ) AS start_time,
-                TIMESTAMP_MICROS(
-                    SAFE_CAST(JSON_VALUE(trace_block_action_sub_execution, '$.completeTime.seconds') AS INT64) * 1000000
-                    + SAFE_CAST(CAST(JSON_VALUE(trace_block_action_sub_execution, '$.completeTime.nanos') AS INT64) / 1000 AS INT64)
-                ) AS complete_time
-                ) ORDER BY trace_block_action_sub_execution_step)
-            FROM UNNEST(JSON_QUERY_ARRAY(trace_block_action,'$.subExecutionSteps')) AS trace_block_action_sub_execution 
-            WITH OFFSET as trace_block_action_sub_execution_step
-        ) as trace_block_action_execution_steps
-        FROM base_data
-        INNER JOIN UNNEST(trace_blocks) as trace_block WITH OFFSET AS trace_block_step 
-        INNER JOIN UNNEST(JSON_QUERY_ARRAY(trace_block,'$.actions')) as trace_block_action WITH OFFSET as trace_block_action_step )
-    , trace_block_actions_agg AS (
-        SELECT 
-        session_id,
-        response_id,
-        block_step,
-        block_start_time,
-        block_complete_time,
-        block_flow_display_name,
-        block_speech_processing_display_name,
-        ARRAY_AGG(
-            STRUCT(
-            action_step,
-            action_type,
-            action_name,
-            action_start_time,
-            action_complete_time,
-            action_page_display_name,
-            action_tool_display_name,
-            action_webhook_url,
-            action_webhook_tag,
-            trace_block_action_execution_steps as action_execution_steps
-            )
-        ORDER BY action_step) as action
-        FROM trace_blocks_unnest
-        GROUP BY 1,2,3,4,5,6,7 )
-  , trace_blocks_agg AS (
-    SELECT 
-      session_id,
-      response_id,
-      ARRAY_AGG(
-        STRUCT(
-          block_step,
-          block_start_time,
-          block_complete_time,
-          block_flow_display_name,
-          block_speech_processing_display_name,
-          action
-        )
-      ORDER BY block_step) as trace
-    FROM trace_block_actions_agg
-    GROUP BY 1,2 )
+
+-- CTE 17: partial_responses_agg
+-- Unnests partial responses and their constituent response messages from 'base_data'.
+-- Aggregates all individual response messages from partial responses into a single array, ordered by their original sequence.
   , partial_responses_agg AS (
-    SELECT 
+    SELECT
       session_id,
       response_id,
-      ARRAY_AGG(response_message ORDER BY partial_response_offset, response_message_offset) as partial_responses
-    FROM base_data
-      ,UNNEST(base_data.partial_responses) as partial_response WITH OFFSET AS partial_response_offset
-      ,UNNEST(JSON_QUERY_ARRAY(partial_response,'$.queryResult.responseMessages')) as response_message WITH OFFSET AS response_message_offset
-    GROUP BY 1,2
+      ARRAY_AGG(response_message ORDER BY partial_response_offset, response_message_offset) AS partial_responses,
+    FROM base_data,
+      UNNEST(base_data.partial_responses) AS partial_response WITH OFFSET AS partial_response_offset,
+      UNNEST(JSON_QUERY_ARRAY(partial_response, '$.queryResult.responseMessages')) AS response_message WITH OFFSET AS response_message_offset
+    GROUP BY 1, 2
   )
+
+-- CTE 18: partial_responses_agent_response
+-- Unnests partial responses, their messages, and text elements to reconstruct streamed agent text.
+-- Aggregates all text snippets from partial responses into a single string, ordered by their original sequence.
   , partial_responses_agent_response AS (
-    SELECT 
+    SELECT
       session_id,
       response_id,
-      STRING_AGG(JSON_VALUE(agent_text,'$'), '\n' ORDER BY partial_response_offset, response_message_offset, agent_text_offset) AS aggregated_agent_text
-    FROM base_data
-      ,UNNEST(base_data.partial_responses) as partial_response WITH OFFSET AS partial_response_offset
-      ,UNNEST(JSON_QUERY_ARRAY(partial_response,'$.queryResult.responseMessages')) as response_message WITH OFFSET AS response_message_offset
-      ,UNNEST(JSON_QUERY_ARRAY(response_message,'$.text.text')) as agent_text WITH OFFSET AS agent_text_offset
-    GROUP BY 1,2 )
+      STRING_AGG(JSON_VALUE(agent_text, '$'), '\n' ORDER BY partial_response_offset, response_message_offset, agent_text_offset) AS aggregated_agent_text,
+    FROM base_data,
+      UNNEST(base_data.partial_responses) AS partial_response WITH OFFSET AS partial_response_offset,
+      UNNEST(JSON_QUERY_ARRAY(partial_response, '$.queryResult.responseMessages')) AS response_message WITH OFFSET AS response_message_offset,
+      UNNEST(JSON_QUERY_ARRAY(response_message, '$.text.text')) AS agent_text WITH OFFSET AS agent_text_offset
+    GROUP BY 1, 2
+  )
+
+-- CTE 19: trace_blocks_unnest
+-- Unnests and extracts detailed information from 'traceBlocks' for each session and response.
+-- Parses block-level details (start/complete times, flow/speech display names) and nested actions within each block.
+, trace_blocks_unnest AS (
+  SELECT
+    -- ===== CORE IDENTIFIERS =====
+    session_id,
+    response_id,
+    request_time,
+    block_step,
+    action_step,
+
+    -- ===== TIMING INFORMATION =====
+    TIMESTAMP_MICROS(SAFE_CAST(JSON_VALUE(block, '$.startTime.seconds') AS INT64) * 1000000 + DIV(SAFE_CAST(JSON_VALUE(block, '$.startTime.nanos') AS INT64), 1000)) AS block_start_time,
+    TIMESTAMP_MICROS(SAFE_CAST(JSON_VALUE(block, '$.completeTime.seconds') AS INT64) * 1000000 + DIV(SAFE_CAST(JSON_VALUE(block, '$.completeTime.nanos') AS INT64), 1000)) AS block_complete_time,
+    TIMESTAMP_MICROS(SAFE_CAST(JSON_VALUE(action, '$.startTime.seconds') AS INT64) * 1000000 + DIV(SAFE_CAST(JSON_VALUE(action, '$.startTime.nanos') AS INT64), 1000)) AS action_start_time,
+    TIMESTAMP_MICROS(SAFE_CAST(JSON_VALUE(action, '$.completeTime.seconds') AS INT64) * 1000000 + DIV(SAFE_CAST(JSON_VALUE(action, '$.completeTime.nanos') AS INT64), 1000)) AS action_complete_time,
+
+    -- ===== TRACE HIERARCHY & TYPE =====
+    CASE
+      WHEN JSON_QUERY(block, '$.flowTraceMetadata') IS NOT NULL THEN 'Flow Trace'
+      WHEN JSON_QUERY(block, '$.speechProcessingMetadata') IS NOT NULL THEN 'Speech Processing'
+      WHEN JSON_QUERY(block, '$.playbookTraceMetadata') IS NOT NULL THEN 'Playbook Trace'
+      WHEN JSON_QUERY(block, '$.latencyTraceMetadata') IS NOT NULL THEN 'Latency Trace'
+      ELSE 'Main Execution'
+    END AS block_type,
+    COALESCE((SELECT ARRAY_AGG(json_key) FROM UNNEST(JSON_KEYS(action)) as json_key WHERE json_key NOT IN ('completeTime','startTime','subExecutionSteps','displayName') AND json_key NOT LIKE '%.%')[SAFE_OFFSET(0)],'unknown') as action_type,
+    JSON_VALUE(action, '$.displayName') AS action_display_name,
+    
+    -- ===== DIALOGFLOW CX ARTIFACTS (Raw) =====
+    JSON_VALUE(block, '$.flowTraceMetadata.flow') AS block_flow_id,
+    JSON_VALUE(block, '$.flowTraceMetadata.displayName') AS block_flow_display_name,
+    ARRAY_REVERSE(SPLIT(JSON_VALUE(action, '$.flowStateUpdate.pageState.page'),'/'))[SAFE_OFFSET(2)] AS action_flow_id_raw,
+    action_id_decoder.action_name AS action_flow_display_name_raw,
+    ARRAY_REVERSE(SPLIT(JSON_VALUE(action, '$.flowStateUpdate.pageState.page'),'/'))[SAFE_OFFSET(0)] AS action_page_id_raw,
+    JSON_VALUE(action, '$.flowStateUpdate.pageState.displayName') AS action_page_display_name_raw,
+
+    -- ===== PLAYBOOK ARTIFACTS =====
+    ARRAY_REVERSE(SPLIT(JSON_VALUE(block, '$.playbookTraceMetadata.playbook'),'/'))[SAFE_OFFSET(0)] AS playbook_id,
+    JSON_VALUE(block, '$.playbookTraceMetadata.displayName') AS playbook_name,
+
+    -- ===== TOOL & WEBHOOK DETAILS =====
+    ARRAY_REVERSE(SPLIT(JSON_VALUE(action, '$.toolUse.tool'),'/'))[SAFE_OFFSET(0)] AS tool_id,
+    JSON_VALUE(action, '$.toolUse.displayName') AS tool_name,
+    CASE
+      WHEN JSON_QUERY(action, '$.toolUse.webhookToolTrace') IS NOT NULL THEN 'Webhook'
+      WHEN JSON_QUERY(action, '$.toolUse.dataStoreToolTrace') IS NOT NULL THEN 'Data Store'
+    END AS tool_type,
+    JSON_VALUE(action, '$.toolUse.webhookToolTrace.webhookUri') AS webhook_url,
+    JSON_VALUE(action, '$.toolUse.webhookToolTrace.webhookTag') AS webhook_tag,
+    JSON_VALUE(action,'$.status.exception.errorMessage') as error_message,
+
+    -- ===== DATA STORE MODELS (New) =====
+    JSON_VALUE(action, '$.toolUse.dataStoreToolTrace.dataStoreConnectionSignals.answerGenerationModelCallSignals.model') AS datastore_answer_generation_model,
+    JSON_VALUE(action, '$.toolUse.dataStoreToolTrace.dataStoreConnectionSignals.rewriterModelCallSignals.model') AS datastore_rewriter_model,
+
+    -- ===== LLM METRICS =====
+    JSON_VALUE(action, '$.llmCall.model') AS llm_model,
+    SAFE_CAST(JSON_VALUE(action, '$.llmCall.tokenCount.conversationContextTokenCount') AS INT64) AS llm_conversation_context_tokens,
+    SAFE_CAST(JSON_VALUE(action, '$.llmCall.tokenCount.exampleTokenCount') AS INT64) AS llm_example_tokens,
+    SAFE_CAST(JSON_VALUE(action, '$.llmCall.tokenCount.totalInputTokenCount') AS INT64) AS llm_total_input_tokens,
+    SAFE_CAST(JSON_VALUE(action, '$.llmCall.tokenCount.totalOutputTokenCount') AS INT64) AS llm_total_output_tokens
+    
+  FROM base_data
+    INNER JOIN UNNEST(trace_blocks) AS block WITH OFFSET AS block_step
+    INNER JOIN UNNEST(JSON_QUERY_ARRAY(block, '$.actions')) as action WITH OFFSET as action_step
+    LEFT JOIN ${ref("action_id_decoder")} AS action_id_decoder
+        ON ARRAY_REVERSE(SPLIT(JSON_VALUE(action, '$.flowStateUpdate.pageState.page'),'/'))[SAFE_OFFSET(2)] = action_id_decoder.action_id
+        AND base_data.agent_id = action_id_decoder.agent_id
+)
+
+,propogate_page_context AS (
+    SELECT
+        *,
+        COALESCE(
+            -- First, try to fill down from the last non-null value
+            LAST_VALUE(action_flow_id_raw IGNORE NULLS) OVER (PARTITION BY session_id, request_time, block_step ORDER BY action_step ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+            -- If that fails (i.e., we are before the first value), fill up from the next non-null value
+            LAST_VALUE(action_flow_id_raw IGNORE NULLS) OVER (PARTITION BY session_id, request_time, block_step ORDER BY action_step DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+        ) AS propagated_flow_id,
+        COALESCE(
+            LAST_VALUE(action_flow_display_name_raw IGNORE NULLS) OVER (PARTITION BY session_id, request_time, block_step ORDER BY action_step ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+            LAST_VALUE(action_flow_display_name_raw IGNORE NULLS) OVER (PARTITION BY session_id, request_time, block_step ORDER BY action_step DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+        ) AS propagated_flow_name,
+        COALESCE(
+            -- First, try to fill down from the last non-null value
+            LAST_VALUE(action_page_id_raw IGNORE NULLS) OVER (PARTITION BY session_id, request_time, block_step ORDER BY action_step ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+            -- If that fails (i.e., we are before the first value), fill up from the next non-null value
+            LAST_VALUE(action_page_id_raw IGNORE NULLS) OVER (PARTITION BY session_id, request_time, block_step ORDER BY action_step DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+        ) AS propagated_page_id,
+        COALESCE(
+            LAST_VALUE(action_page_display_name_raw IGNORE NULLS) OVER (PARTITION BY session_id, request_time, block_step ORDER BY action_step ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+            LAST_VALUE(action_page_display_name_raw IGNORE NULLS) OVER (PARTITION BY session_id, request_time, block_step ORDER BY action_step DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+        ) AS propagated_page_name
+    FROM trace_blocks_unnest
+)
+
+,final_enrichment AS (
+    SELECT
+        -- Core identifiers and timing
+        f.session_id, f.response_id, f.request_time, f.block_step, f.action_step,
+        f.block_start_time, f.block_complete_time, f.action_start_time, f.action_complete_time,
+        -- Hierarchy and types
+        f.block_type, f.action_type, f.action_display_name,
+        -- Correctly propagated DFCX artifacts
+        f.block_flow_id,
+        f.block_flow_display_name,
+        CASE WHEN f.block_type IN ('Flow Trace','Main Execution') THEN f.propagated_flow_id END AS action_flow_id,
+        CASE WHEN f.block_type IN ('Flow Trace','Main Execution') THEN f.propagated_flow_name END AS action_flow_display_name,
+        CASE WHEN f.block_type IN ('Flow Trace','Main Execution') THEN f.propagated_page_id END AS action_page_id,
+        CASE WHEN f.block_type IN ('Flow Trace','Main Execution') THEN f.propagated_page_name END AS action_page_display_name,
+        -- Playbook artifacts
+        f.playbook_id, f.playbook_name,
+        -- Tool/Webhook details
+        f.tool_id,
+        IF(f.tool_id = 'data_store_no_match' ,'Data Store No Match',f.tool_name) as tool_name,
+        IF(f.tool_id = 'inline-action','Inline Action',f.tool_type) as tool_type,
+        f.webhook_url,
+        f.webhook_tag,
+        CASE WHEN f.action_type = 'toolUse' THEN TIMESTAMP_DIFF(f.action_complete_time, f.action_start_time, MILLISECOND) END AS tool_latency_ms,
+        f.error_message,
+        IF(f.tool_type = 'Webhook',TRIM(REGEXP_EXTRACT(f.error_message, r'State:\s*([^,]+)')),'OK') AS webhook_state,
+        IF(f.tool_type = 'Webhook',TRIM(REGEXP_EXTRACT(f.error_message, r'Reason:\s*(.+)')),CAST(NULL AS STRING)) AS webhook_reason,
+        -- Data Store Model Info
+        f.datastore_answer_generation_model,
+        f.datastore_rewriter_model,
+        -- LLM Metrics
+        f.llm_model, f.llm_conversation_context_tokens, f.llm_example_tokens, f.llm_total_input_tokens, f.llm_total_output_tokens
+    FROM propogate_page_context f
+)
+
+-- CTE 20: trace_block_actions_agg
+-- Aggregates actions within each trace block into an array of structs.
+, trace_block_actions_agg AS (
+    SELECT
+        f.session_id,
+        f.response_id,
+        f.request_time,
+        f.block_step,
+        ANY_VALUE(f.block_type) AS block_type,
+        ANY_VALUE(f.block_start_time) AS block_start_time,
+        ANY_VALUE(f.block_complete_time) AS block_complete_time,
+        ANY_VALUE(f.block_flow_id) AS block_flow_id,
+        ANY_VALUE(f.block_flow_display_name) AS block_flow_display_name,
+        ARRAY_AGG(
+        STRUCT(
+            f.action_step,
+            f.action_type,
+            f.action_display_name,
+            f.action_start_time,
+            f.action_complete_time,
+            f.action_flow_id,
+            f.action_flow_display_name,
+            f.action_page_id,
+            f.action_page_display_name,
+            f.playbook_id,
+            f.playbook_name,
+            f.tool_id,
+            f.tool_name,
+            f.tool_type,
+            f.webhook_url,
+            f.webhook_tag,
+            f.tool_latency_ms,
+            f.datastore_answer_generation_model,
+            f.datastore_rewriter_model,
+            f.llm_model,
+            f.llm_conversation_context_tokens,
+            f.llm_example_tokens,
+            f.llm_total_input_tokens,
+            f.llm_total_output_tokens,
+            f.error_message,
+            f.webhook_state,
+            f.webhook_reason
+        ) ORDER BY f.action_step
+        ) AS actions
+    FROM final_enrichment f
+    GROUP BY 
+        f.session_id,
+        f.response_id,
+        f.request_time,
+        f.block_step
+)
+
+-- CTE 21: trace_blocks_agg
+-- Aggregates trace blocks into an array of structs for each session and response.
+,trace_blocks_agg AS (
+    SELECT
+        agb.session_id,
+        agb.response_id,
+        agb.request_time,
+        ARRAY_AGG(
+        STRUCT(
+            agb.block_step,
+            agb.block_type,
+            agb.block_start_time,
+            agb.block_complete_time,
+            agb.block_flow_id,
+            agb.block_flow_display_name,
+            agb.actions
+        ) ORDER BY agb.block_step
+        ) AS blocks
+    FROM trace_block_actions_agg agb
+    GROUP BY
+        agb.session_id,
+        agb.response_id,
+        agb.request_time
+)
+
+-- CTE 22: tool_calls
+-- Creates a subset of tool calls from trace for latency and error reporting
+, tool_calls AS (
+    SELECT 
+        session_id, 
+        response_id,
+        ARRAY_AGG (
+        STRUCT(
+            block_step,
+            action_step,
+            action_flow_id,
+            action_flow_display_name, 
+            action_page_id,
+            action_page_display_name,
+            playbook_id,
+            playbook_name,
+            tool_id, 
+            tool_name, 
+            tool_type, 
+            tool_latency_ms,
+            webhook_url,
+            webhook_tag,
+            error_message,
+            webhook_state,
+            webhook_reason
+        )
+        ORDER BY block_step ASC, action_step ASC
+        ) as tools
+    FROM final_enrichment
+    WHERE tool_id IS NOT NULL
+    GROUP BY 1,2
+)
+
+, new_trace_sequence AS (
+  SELECT
+    trace_blocks_agg.session_id,
+    trace_blocks_agg.response_id,
+    trace_blocks_agg.request_time,
+    -- Create an array of all actions, ordered by their offsets
+    ARRAY_AGG(
+      STRUCT(
+        action.action_flow_id,
+        action.action_flow_display_name,
+        action.action_page_id,
+        action.action_page_display_name, 
+        action.playbook_id,
+        action.playbook_name
+      ) 
+      ORDER BY block_offset, action_offset
+    ) AS ordered_actions
+  FROM trace_blocks_agg
+    INNER JOIN UNNEST(blocks) as block WITH OFFSET AS block_offset
+    INNER JOIN UNNEST(block.actions) as action WITH OFFSET AS action_offset
+  WHERE action_page_display_name IS NOT NULL OR playbook_name IS NOT NULL
+  GROUP BY 1, 2, 3
+)
+
+-- CTE 7: source_and_target_page
+-- Determines the effective source and target flow/page display names, especially handling transitions to and from playbooks.
+-- CTE 11: source_and_target_page
+-- Extracts the source (initial) and target (final) flow and page details from the aggregated execution sequence.
+-- Uses the first and last elements of the 'execution_sequence' array.
+, source_and_target_page AS (
+    SELECT
+        session_id,
+        response_id,
+        request_time,
+        IF(ordered_actions[OFFSET(0)].playbook_name IS NULL, ordered_actions[OFFSET(0)].action_flow_id, 'PLAYBOOK') AS source_flow_id,
+        IF(ordered_actions[OFFSET(0)].playbook_name IS NULL, ordered_actions[OFFSET(0)].action_flow_display_name, 'PLAYBOOK') AS source_flow_display_name,
+        IF(ordered_actions[OFFSET(0)].playbook_name IS NULL, ordered_actions[OFFSET(0)].action_page_id, ordered_actions[OFFSET(0)].playbook_id) AS source_page_id,
+        IF(ordered_actions[OFFSET(0)].playbook_name IS NULL, ordered_actions[OFFSET(0)].action_page_display_name, ordered_actions[OFFSET(0)].playbook_name) AS source_page_display_name,
+        IF(ordered_actions[OFFSET(ARRAY_LENGTH(ordered_actions) - 1)].playbook_name IS NULL, ordered_actions[OFFSET(ARRAY_LENGTH(ordered_actions) - 1)].action_flow_id, 'PLAYBOOK') as flow_id,
+        IF(ordered_actions[OFFSET(ARRAY_LENGTH(ordered_actions) - 1)].playbook_name IS NULL, ordered_actions[OFFSET(ARRAY_LENGTH(ordered_actions) - 1)].action_flow_display_name, 'PLAYBOOK') as flow_display_name,
+        IF(ordered_actions[OFFSET(ARRAY_LENGTH(ordered_actions) - 1)].playbook_name IS NULL, ordered_actions[OFFSET(ARRAY_LENGTH(ordered_actions) - 1)].action_page_id, ordered_actions[OFFSET(ARRAY_LENGTH(ordered_actions) - 1)].playbook_id) as page_id,
+        IF(ordered_actions[OFFSET(ARRAY_LENGTH(ordered_actions) - 1)].playbook_name IS NULL, ordered_actions[OFFSET(ARRAY_LENGTH(ordered_actions) - 1)].action_page_display_name, ordered_actions[OFFSET(ARRAY_LENGTH(ordered_actions) - 1)].playbook_name) as page_display_name
+    FROM new_trace_sequence
+)
+
 SELECT
     base_data.project_id
   , base_data.location
@@ -678,7 +725,6 @@ SELECT
   , source_and_target_page.source_flow_display_name
   , source_and_target_page.source_page_id
   , source_and_target_page.source_page_display_name
-  , source_and_target_page.matched_intent_parameters
   , source_and_target_page.flow_id
   , source_and_target_page.flow_display_name
   , source_and_target_page.page_id
@@ -700,7 +746,8 @@ SELECT
   , playbooks_agg.playbooks
   , base_data.playbook_metrics
   , ARRAY_CONCAT(COALESCE(partial_responses_agg.partial_responses,[]),COALESCE(base_data.response_messages,[])) as response_messages
-  , trace_blocks_agg.trace
+  , trace_blocks_agg.blocks
+  , tool_calls.tools
   , base_data.insert_time
 FROM base_data
   LEFT JOIN execution_sequence_agg
@@ -721,16 +768,19 @@ FROM base_data
     USING(session_id,response_id)
   LEFT JOIN partial_responses_agg
     USING (session_id, response_id)
+  LEFT JOIN tool_calls
+    USING (session_id, response_id)
+
 post_operations {
   -- Step 1: Identify sessions that need fixing
   CREATE TEMP TABLE sessions_to_fix AS
   SELECT
     session_id,
     ARRAY_AGG(DISTINCT session_start_time ORDER BY session_start_time) AS distinct_start_times,
-    MIN(session_start_time)   AS new_start_time,
+    MIN(session_start_time) AS new_start_time,
     COUNT(DISTINCT session_start_time) AS num_start_times
   FROM ${self()}
-  WHERE session_start_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL 3 HOUR)
+  WHERE session_start_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL ${dataform.projectConfig.vars.sessionMaxSeconds} SECOND)
   GROUP BY session_id
   HAVING num_start_times > 1;
   

@@ -1,6 +1,0 @@
-config {
-    type: "table",
-    description: "ETL helper table for identifying head intents",
-}
-
-SELECT 'Default Welcome Intent' as intent_display_name

@@ -2,67 +2,13 @@ config {
     type: "incremental",
     bigquery: {
         partitionBy: "TIMESTAMP_TRUNC(session_start_time, DAY)",
-        updatePartitionFilter: "session_start_time >= session_start_time_checkpoint",
         requirePartitionFilter : true
-    },
-    uniqueKey: ["session_id","response_id"],
-    description: "Additional Transcript Transformations",
-    columns: {
-      session_start_time: "The time at which a session starts",
-      session_id: "The fully qualified unique ID for the session",
-      response_id: "The unique ID associated with the response from the agent",
-      request_time: "The time of the conversational turn",
-      insert_time: "The UTC timestamp of when the record was inserted to the source table",
-      contain_ai_generated_content: "Boolean indicator if the agent response contained AI-generated content",
-      contain_attempted_data_store_interactions: "Boolean indicator if the agent response contained attempted data store interactions",
-      contain_data_store_content: "Boolean indicator if the agent response contained data store content",
-      contain_data_store_faq_content: "Boolean indicator if the agent response contained data store FAQ content",
-      contain_generators_content: "Boolean indicator if the agent response contained generators content",
-      contain_generative_fallback: "Boolean indicator if the agent response contained generative fallback",
-      contain_playbook: "Boolean indicator if the conversation turn involved a playbook",
-      matched_intent: "The human readable name of the matched intent for the user utterance",
-      source_agent_response: "The agent's response in the previous turn of the conversation",
-      source_flow_display_name: "The human readable name of the flow in the previous turn or the source flow for playbook turns",
-      source_page_display_name: "The human readable name of the page in the previous turn or the source page for playbook turns",
-      flow_display_name: "The human readable name of the flow for the current turn, defaulting to 'PLAYBOOK' for playbook turns",
-      page_display_name: "The human readable name of the page for the current turn, defaulting to the playbook name for playbook turns"
     }
 }
 
 pre_operations {
-  DECLARE insert_time_checkpoint DEFAULT (
-    ${
-      when(incremental(),
-        `SELECT COALESCE(MAX(insert_time),CURRENT_TIMESTAMP()) FROM ${self()} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.checkpointSeconds} SECOND)`,
-        `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
-    }
-    );
-  DECLARE session_start_time_checkpoint DEFAULT (
-    ${
-      when(incremental(),
-        `SELECT COALESCE(MIN(session_start_time),CURRENT_TIMESTAMP()) FROM ${ref("dfcx_transcript")} WHERE session_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${dataform.projectConfig.vars.checkpointSeconds} SECOND) AND insert_time > insert_time_checkpoint`,
-        `SELECT ${dataform.projectConfig.vars.backfillTimestamp}`)
-    }
-    );
-
-  ${
-    when(incremental(),
-      `MERGE ${self()} AS t
-      USING (
-          SELECT *
-          FROM ${ref("dfcx_transcript_position")}
-          WHERE insert_time >= TIMESTAMP_SUB(insert_time_checkpoint, INTERVAL (${dataform.projectConfig.vars.insertDelaySeconds} + ${dataform.projectConfig.vars.sessionMaxSeconds}) SECOND)
-        ) AS s
-      ON t.session_id = s.session_id
-      AND t.insert_time = s.insert_time
-      AND t.session_start_time >= TIMESTAMP_SUB(session_start_time_checkpoint, INTERVAL (${dataform.projectConfig.vars.insertDelaySeconds} + ${dataform.projectConfig.vars.sessionMaxSeconds}) SECOND) 
-      WHEN MATCHED THEN
-      UPDATE SET
-        t.session_start_time = s.session_start_time;`,
-        ``
-    )
-  }
-
+  DECLARE insert_time_checkpoint DEFAULT ( SELECT COALESCE(MAX(insert_time),${dataform.projectConfig.vars.backfillTimestamp}) FROM ${self()} );
+  DECLARE session_start_time_checkpoint DEFAULT ( SELECT COALESCE(MIN(session_start_time),${dataform.projectConfig.vars.backfillTimestamp}) FROM ${ref("dfcx_transcript")} WHERE session_start_time IS NOT NULL AND insert_time > insert_time_checkpoint )
 }
 
 
@@ -93,6 +39,7 @@ WITH
   FROM ${ref("dfcx_transcript")} AS dfcx_transcript
   WHERE TRUE
     AND session_start_time >= session_start_time_checkpoint
+    AND insert_time > insert_time_checkpoint
 )
 , ai_indicators AS (
 SELECT
@@ -135,22 +82,7 @@ GROUP BY 1,2
     , COALESCE(ai_indicators.contain_generators_content, FALSE) AS contain_generators_content
     , COALESCE(ai_indicators.contain_generative_fallback, FALSE) AS contain_generative_fallback
     , IF(dfcx_transcript.match_type='PLAYBOOK' OR 'toolUse' IN UNNEST(actions.action) OR 'playbookInvocation' IN UNNEST(actions.action) OR 'flowInvocation' IN UNNEST(actions.action),TRUE,FALSE) as contain_playbook
-    , dfcx_transcript.matched_intent
     , dfcx_transcript.source_agent_response
-    , CASE
-      WHEN source_match_type <> 'PLAYBOOK' and match_type = 'PLAYBOOK' THEN source_playbook_flow
-      WHEN source_match_type = 'PLAYBOOK' and match_type <> 'PLAYBOOK' THEN 'PLAYBOOK'
-      WHEN source_match_type = 'PLAYBOOK' and match_type = 'PLAYBOOK' THEN 'PLAYBOOK'
-      ELSE source_flow_display_name
-      END AS source_flow_display_name
-    , CASE
-      WHEN source_match_type <> 'PLAYBOOK' and match_type = 'PLAYBOOK' THEN source_playbook_flow
-      WHEN source_match_type = 'PLAYBOOK' and match_type <> 'PLAYBOOK' THEN playbook_playbook_before
-      WHEN source_match_type = 'PLAYBOOK' and match_type = 'PLAYBOOK' THEN source_playbook
-      ELSE source_page_display_name
-      END AS source_page_display_name
-    , COALESCE(flow_display_name,'PLAYBOOK') as flow_display_name
-    , COALESCE(page_display_name,playbook) as page_display_name
   FROM dfcx_transcript
   LEFT JOIN ai_indicators
     ON dfcx_transcript.session_id = ai_indicators.session_id

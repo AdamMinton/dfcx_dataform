@@ -1,8 +1,0 @@
-config {
-    type: "table",
-    description: "Decoder for Agent ID",
-}
-
-SELECT '1f4819f2-c916-4456-acfe-c79c5a2b495f' as agent_id, 'test' as agent_name
-UNION ALL SELECT 'a2a396c4-5ae3-49ea-a078-cbb4b36b3338' as agent_id, 'test' as agent_name
-UNION ALL SELECT '615a55ad-bb61-4f49-a27b-f453fd39afb4' as agent_id, 'test' as agent_name

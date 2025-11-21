@@ -734,7 +734,7 @@ WITH
             ) IGNORE NULLS ORDER BY block_step, action_step LIMIT 1
         )[SAFE_OFFSET(0)] as primary_intent
     FROM final_enrichment
-    WHERE intent_id IS NOT NULL
+    WHERE intent_display_id IS NOT NULL
     GROUP BY 1, 2
 )
 
